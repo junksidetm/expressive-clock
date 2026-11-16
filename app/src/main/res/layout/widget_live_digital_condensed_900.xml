@@ -1,0 +1,24 @@
+<?xml version="1.0" ?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@android:id/background" android:layout_width="match_parent" android:layout_height="match_parent">
+    <ImageView android:id="@+id/background_shape" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:importantForAccessibility="no"/>
+    <FrameLayout android:id="@+id/live_row_slot" android:layout_width="match_parent" android:layout_height="match_parent">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_horizontal">
+            <LinearLayout android:id="@+id/live_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal">
+                <TextClock android:id="@+id/live_hours" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="sans-serif-condensed" android:textFontWeight="900" android:fontFeatureSettings="" android:includeFontPadding="false" android:maxLines="1" android:gravity="center"/>
+                <TextView android:id="@+id/live_colon" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="sans-serif-condensed" android:textFontWeight="900" android:fontFeatureSettings="" android:includeFontPadding="false" android:maxLines="1" android:gravity="center" android:text=":"/>
+                <TextClock android:id="@+id/live_minutes" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="sans-serif-condensed" android:textFontWeight="900" android:fontFeatureSettings="" android:includeFontPadding="false" android:maxLines="1" android:gravity="center"/>
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+    <FrameLayout android:id="@+id/live_hour_slot" android:layout_width="match_parent" android:layout_height="match_parent">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_horizontal"/>
+    </FrameLayout>
+    <FrameLayout android:id="@+id/live_minute_slot" android:layout_width="match_parent" android:layout_height="match_parent">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_horizontal"/>
+    </FrameLayout>
+    <FrameLayout android:id="@+id/live_date_slot" android:layout_width="match_parent" android:layout_height="match_parent">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_horizontal">
+            <TextClock android:id="@+id/live_date" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="sans-serif-condensed" android:textFontWeight="900" android:fontFeatureSettings="" android:includeFontPadding="false" android:maxLines="1" android:gravity="center"/>
+        </LinearLayout>
+    </FrameLayout>
+</FrameLayout>

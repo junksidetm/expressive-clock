@@ -8,7 +8,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
@@ -16,7 +15,6 @@ import android.text.format.DateFormat
 import android.util.SizeF
 import android.view.View
 import android.widget.RemoteViews
-import androidx.core.content.res.ResourcesCompat
 import app.expressiveclock.MainActivity
 import app.expressiveclock.R
 import app.expressiveclock.data.ClockSettings
@@ -28,9 +26,6 @@ import app.expressiveclock.data.WidgetConfig
 import app.expressiveclock.data.WidgetFontFamily
 import app.expressiveclock.data.WidgetType
 import java.io.ByteArrayOutputStream
-import java.time.LocalTime
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -46,11 +41,23 @@ object DigitalClockWidgetRenderer {
         val settings = store.settingsNow()
         val options = manager.getAppWidgetOptions(appWidgetId)
 
-        val views = build(context, config, settings, options)
+        val views = try {
+            build(context, config, settings, options)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // Font/artwork failures must not leave a new widget blank or displaying stale time.
+            android.util.Log.e("DigitalClockWidget", "Rendering native clock fallback", error)
+            RemoteViews(context.packageName, R.layout.widget_digital_initial).apply {
+                setOnClickPendingIntent(android.R.id.background, PendingIntent.getActivity(
+                    context, 0, Intent(context, MainActivity::class.java),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            }
+        }
         manager.updateAppWidget(appWidgetId, views)
     }
 
-    private fun build(
+    private suspend fun build(
         context: Context,
         config: WidgetConfig,
         settings: ClockSettings,
@@ -84,7 +91,7 @@ object DigitalClockWidgetRenderer {
         return RemoteViews(landscape, portrait)
     }
 
-    private fun one(
+    private suspend fun one(
         context: Context,
         config: WidgetConfig,
         settings: ClockSettings,
@@ -92,20 +99,16 @@ object DigitalClockWidgetRenderer {
         h: Int,
     ): RemoteViews {
         val colours = WidgetColours.resolve(context, config, settings)
-        val views = RemoteViews(context.packageName, R.layout.widget_digital_clock)
+        val profile = NativeWidgetFonts.resolve(context, config.digitalFont, config.digitalWeight)
+        val layout = profile.layout(config.digitalLayout == DigitalLayout.STACKED)
+        val views = RemoteViews(context.packageName, layout)
 
-        // Render full pixel-perfect bitmap for Digital Clock
-        val bmp = renderDigitalBitmap(context, config, colours, w, h)
-        views.setImageViewIcon(R.id.background_shape, bmp.toIcon())
-
-        // Hide all included XML containers to avoid overlaying native TextClock
-        listOf(
-            R.id.horizontal_flex, R.id.horizontal_serif, R.id.horizontal_monospace,
-            R.id.horizontal_cursive, R.id.horizontal_sans, R.id.stacked_flex,
-            R.id.stacked_serif, R.id.stacked_monospace, R.id.stacked_cursive, R.id.stacked_sans,
-        ).forEach { containerId ->
-            views.setViewVisibility(containerId, View.GONE)
+        // These are the same restricted-context native paints used by the device preview.
+        val (timePaint, datePaint) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            profile.paints(context, layout)
         }
+        val bmp = renderDigitalBitmap(context, config, colours, w, h, views, timePaint, datePaint, profile)
+        views.setImageViewIcon(R.id.background_shape, bmp.toIcon())
 
         views.setOnClickPendingIntent(
             android.R.id.background,
@@ -126,6 +129,10 @@ object DigitalClockWidgetRenderer {
         colours: FaceRenderer.Colours,
         w: Int,
         h: Int,
+        views: RemoteViews,
+        timePaint: Paint,
+        datePaint: Paint,
+        profile: NativeWidgetFonts.Profile,
     ): Bitmap {
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
@@ -150,25 +157,6 @@ object DigitalClockWidgetRenderer {
             }
         }
 
-        // 2. Resolve Typeface & Weight
-        val isBold = config.digitalWeight == DigitalTypefaceWeight.BOLD || config.digitalWeight == DigitalTypefaceWeight.MEDIUM
-        val style = if (isBold) Typeface.BOLD else Typeface.NORMAL
-
-        val tf = when (config.digitalFont) {
-            WidgetFontFamily.GOOGLE_SANS, WidgetFontFamily.GOOGLE_SANS_NORMAL -> ResourcesCompat.getFont(context, R.font.google_sans_flex) ?: Typeface.SANS_SERIF
-            WidgetFontFamily.SERIF -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                Typeface.create(Typeface.SERIF, config.digitalWeight.weightInt, false)
-            } else {
-                Typeface.create(Typeface.SERIF, style)
-            }
-            WidgetFontFamily.MONOSPACE -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                Typeface.create(Typeface.MONOSPACE, config.digitalWeight.weightInt, false)
-            } else {
-                Typeface.create(Typeface.MONOSPACE, style)
-            }
-            WidgetFontFamily.CURSIVE -> Typeface.create("cursive", Typeface.NORMAL)
-        }
-
         val isStacked = config.digitalLayout == DigitalLayout.STACKED
         val isTimeOnly = !config.showDate && !config.showDayOfWeek
         val isCompact = config.digitalLayout == DigitalLayout.COMPACT
@@ -184,91 +172,99 @@ object DigitalClockWidgetRenderer {
         val hourColorInt = config.digitalHourColor?.toInt() ?: colours.hourHand
         val colonColorInt = config.digitalColonColor?.toInt() ?: colours.onFace
         val minuteColorInt = config.digitalMinuteColor?.toInt() ?: colours.minuteHand
-        val dayColorInt = config.digitalDayColor?.toInt() ?: colours.minor
         val dateColorInt = config.digitalDateColor?.toInt() ?: colours.minor
 
-        val widthVal = if (config.digitalFont == WidgetFontFamily.GOOGLE_SANS) 25f else 100f
-
-        val timePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-            typeface = tf
-            textAlign = Paint.Align.CENTER
-            if (config.digitalFont == WidgetFontFamily.GOOGLE_SANS || config.digitalFont == WidgetFontFamily.GOOGLE_SANS_NORMAL) {
-                fontFeatureSettings = "tnum, lnum"
-                setFontVariationSettings("'opsz' 144,'wdth' $widthVal,'wght' ${config.digitalWeight.weightInt}")
+        fun clock(id: Int, twelve: String, twentyFour: String) {
+            views.setCharSequence(id, "setFormat12Hour", twelve)
+            views.setCharSequence(id, "setFormat24Hour", twentyFour)
+        }
+        clock(R.id.live_hours, "hh", "HH")
+        val minutes = if (config.showSeconds && !isCompact) "mm:ss" else "mm"
+        clock(R.id.live_minutes, minutes, minutes)
+        val datePattern = if (showDateView)
+            DateFormat.getBestDateTimePattern(Locale.getDefault(), dateSkeleton) else ""
+        val styledDate = android.text.SpannableString(datePattern)
+        if (config.showDayOfWeek) {
+            val start = datePattern.indexOf('E')
+            if (start >= 0) {
+                val end = (start until datePattern.length).firstOrNull { datePattern[it] != 'E' } ?: datePattern.length
+                styledDate.setSpan(android.text.style.ForegroundColorSpan(
+                    config.digitalDayColor?.toInt() ?: colours.minor), start, end,
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         }
+        views.setCharSequence(R.id.live_date, "setFormat12Hour", styledDate)
+        views.setCharSequence(R.id.live_date, "setFormat24Hour", styledDate)
+        views.setBoolean(R.id.live_date, "setAllCaps", true)
+        views.setViewVisibility(R.id.live_date, if (showDateView) View.VISIBLE else View.GONE)
+        views.setViewVisibility(R.id.live_row, if (isStacked) View.GONE else View.VISIBLE)
+        views.setViewVisibility(R.id.live_hours, View.VISIBLE)
+        views.setViewVisibility(R.id.live_minutes, View.VISIBLE)
 
-        val datePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-            typeface = tf
-            color = dateColorInt
-            textAlign = Paint.Align.CENTER
-            if (config.digitalFont == WidgetFontFamily.GOOGLE_SANS || config.digitalFont == WidgetFontFamily.GOOGLE_SANS_NORMAL) {
-                fontFeatureSettings = "tnum, lnum"
-                setFontVariationSettings("'opsz' 144,'wdth' $widthVal,'wght' 600")
+        // Move the same clock views between horizontal and stacked arrangements by selecting
+        // the matching layout; all positions use the original bitmap's size/baseline formulas.
+        var size = if (isStacked) h * (if (showDateView) .30f else .38f)
+            else h * (if (isCompact) .22f else .38f)
+        var dateSize = size * (if (isStacked) .28f else if (isCompact) .45f else .32f)
+        timePaint.textSize = size
+        // Reserve both advance width and ink overhang. A horizontal LinearLayout otherwise
+        // measures its final clock against only the remaining width, clipping the last digit.
+        fun inkWidth(text: String, paint: Paint): Float {
+            val bounds = android.graphics.Rect()
+            paint.getTextBounds(text, 0, text.length, bounds)
+            return maxOf(paint.measureText(text), bounds.right.toFloat()) -
+                minOf(0f, bounds.left.toFloat())
+        }
+        fun pairWidth(paint: Paint) = (0..59).maxOf {
+            inkWidth(String.format(Locale.getDefault(), "%02d", it), paint)
+        }
+        val gutter = 2f * context.resources.displayMetrics.density
+        val pair = pairWidth(timePaint)
+        val colon = inkWidth(":", timePaint)
+        val minute = if (config.showSeconds && !isCompact) pair * 2f + colon else pair
+        val scale = DigitalTextFit.scale(w.toFloat(), pair, colon, minute, isStacked, gutter)
+        size *= scale
+        dateSize *= scale
+        timePaint.textSize = size
+        datePaint.textSize = dateSize
+        // The fit uses the widest possible time, while native views keep natural advances.
+        // Tiny symmetric padding protects italic/curved glyph overhangs without fixed digit slots.
+        listOf(R.id.live_hours, R.id.live_minutes, R.id.live_colon, R.id.live_date).forEach {
+            views.setViewPadding(it, gutter.roundToInt() / 2, 0, gutter.roundToInt() / 2, 0)
+        }
+        if (showDateView) {
+            val formatter = java.text.SimpleDateFormat(datePattern, Locale.getDefault())
+            val calendar = java.util.Calendar.getInstance().apply { set(2024, 0, 1, 12, 0, 0) }
+            val widest = (0 until 366).maxOf {
+                val value = formatter.format(calendar.time).uppercase(Locale.getDefault())
+                calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                inkWidth(value, datePaint)
             }
+            dateSize *= ((w - 2 * gutter).coerceAtLeast(1f) / widest.coerceAtLeast(1f)).coerceAtMost(1f)
         }
-
-        val now = LocalTime.now()
-        val is24 = DateFormat.is24HourFormat(context)
-        val hourStr = if (is24) now.format(DateTimeFormatter.ofPattern("HH")) else now.format(DateTimeFormatter.ofPattern("hh"))
-        val minStr = if (config.showSeconds && !isCompact) {
-            now.format(DateTimeFormatter.ofPattern("mm:ss"))
-        } else {
-            now.format(DateTimeFormatter.ofPattern("mm"))
+        fun style(id: Int, sizePx: Float, color: Int) {
+            views.setTextViewTextSize(id, android.util.TypedValue.COMPLEX_UNIT_PX, sizePx)
+            views.setTextColor(id, color)
+            profile.variation?.let { views.setString(id, "setFontVariationSettings", it) }
         }
-
-        val dateText = if (showDateView) {
-            val pattern = DateFormat.getBestDateTimePattern(Locale.getDefault(), dateSkeleton)
-            ZonedDateTime.now().format(DateTimeFormatter.ofPattern(pattern)).uppercase(Locale.getDefault())
-        } else ""
-
+        style(R.id.live_hours, size, hourColorInt)
+        style(R.id.live_minutes, size, minuteColorInt)
+        style(R.id.live_colon, size, colonColorInt)
+        style(R.id.live_date, dateSize, dateColorInt)
+        timePaint.textSize = size
+        datePaint.textSize = dateSize
+        fun top(slot: Int, baseline: Float, paint: Paint) {
+            views.setViewPadding(slot, 0, (baseline + paint.fontMetrics.ascent).roundToInt().coerceAtLeast(0), 0, 0)
+        }
+        val cy = h / 2f
         if (isStacked) {
-            val sizePx = if (showDateView) h * 0.30f else h * 0.38f
-            timePaint.textSize = sizePx
-            datePaint.textSize = sizePx * 0.28f
-
-            val cy = h / 2f
-            timePaint.color = hourColorInt
-            canvas.drawText(hourStr, w / 2f, cy - sizePx * 0.05f, timePaint)
-
-            timePaint.color = minuteColorInt
-            canvas.drawText(minStr, w / 2f, cy + sizePx * 0.75f, timePaint)
-
-            if (showDateView) {
-                datePaint.color = dateColorInt
-                canvas.drawText(dateText, w / 2f, cy + sizePx * 1.18f, datePaint)
-            }
+            top(R.id.live_hour_slot, cy - size * .05f, timePaint)
+            top(R.id.live_minute_slot, cy + size * .75f, timePaint)
+            top(R.id.live_date_slot, cy + size * 1.18f, datePaint)
         } else {
-            val sizePx = when {
-                isCompact -> h * 0.22f
-                else -> h * 0.38f
-            }
-            timePaint.textSize = sizePx
-            datePaint.textSize = if (isCompact) sizePx * 0.45f else sizePx * 0.32f
-
-            val hourWidth = timePaint.measureText(hourStr)
-            val colonWidth = timePaint.measureText(":")
-            val minWidth = timePaint.measureText(minStr)
-            val totalTimeWidth = hourWidth + colonWidth + minWidth
-
-            val startX = (w - totalTimeWidth) / 2f
-            val cy = if (showDateView) h / 2f - sizePx * 0.10f else h / 2f + sizePx * 0.32f
-
-            timePaint.textAlign = Paint.Align.LEFT
-            timePaint.color = hourColorInt
-            canvas.drawText(hourStr, startX, cy, timePaint)
-
-            timePaint.color = colonColorInt
-            canvas.drawText(":", startX + hourWidth, cy, timePaint)
-
-            timePaint.color = minuteColorInt
-            canvas.drawText(minStr, startX + hourWidth + colonWidth, cy, timePaint)
-
-            if (showDateView) {
-                datePaint.textAlign = Paint.Align.CENTER
-                datePaint.color = dateColorInt
-                canvas.drawText(dateText, w / 2f, cy + sizePx * 0.48f, datePaint)
-            }
+            val baseline = if (showDateView) cy - size * .10f else cy + size * .32f
+            top(R.id.live_row_slot, baseline, timePaint)
+            top(R.id.live_date_slot, baseline + size * .48f, datePaint)
         }
 
         return bmp

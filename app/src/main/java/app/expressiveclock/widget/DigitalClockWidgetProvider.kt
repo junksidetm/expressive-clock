@@ -54,7 +54,12 @@ class DigitalClockWidgetProvider : AppWidgetProvider() {
             Intent.ACTION_LOCALE_CHANGED,
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
-            -> refreshAll(context)
+            -> background(context) {
+                val manager = AppWidgetManager.getInstance(context)
+                manager.getAppWidgetIds(component(context)).forEach {
+                    DigitalClockWidgetRenderer.update(context, manager, it)
+                }
+            }
         }
     }
 

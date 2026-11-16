@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A working clock while configuration/loading is in progress; no app tick required. -->
+<TextClock xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fontFamily="sans-serif"
+    android:format12Hour="hh:mm"
+    android:format24Hour="HH:mm"
+    android:gravity="center"
+    android:textSize="32sp"
+    android:textColor="#FFFFFFFF"
+    android:background="#CC303030" />

@@ -12,7 +12,7 @@
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
     android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_clock_placeholder"
+    android:initialLayout="@layout/widget_digital_initial"
     android:previewImage="@mipmap/ic_launcher"
     android:description="@string/digital_widget_description"
     android:configure="app.expressiveclock.widget.ClockWidgetConfigActivity"

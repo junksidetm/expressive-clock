@@ -159,6 +159,23 @@ private enum class DigitalLabelState {
 }
 
 @Composable
+private fun rememberDigitalProfile(font: WidgetFontFamily, weight: DigitalTypefaceWeight): NativeWidgetFonts.Profile {
+    val context = LocalContext.current
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current.toString()
+    return remember(context, configuration, font, weight) { NativeWidgetFonts.resolve(context, font, weight) }
+}
+
+@Composable
+private fun rememberDigitalNativeFont(font: WidgetFontFamily, weight: DigitalTypefaceWeight = DigitalTypefaceWeight.REGULAR): FontFamily {
+    val context = LocalContext.current
+    val profile = rememberDigitalProfile(font, weight)
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current.toString()
+    return remember(context, profile, configuration) {
+        FontFamily(profile.paints(context, profile.layout(false)).first.typeface)
+    }
+}
+
+@Composable
 fun WidgetFontFamily.toComposeFontFamily(weight: Int = 400): FontFamily = when (this) {
     WidgetFontFamily.GOOGLE_SANS -> FontFamily(
         Font(
@@ -389,6 +406,7 @@ fun WidgetConfigScreen(
 private fun TypefaceChooserCardRow(
     value: WidgetFontFamily,
     onSelect: (WidgetFontFamily) -> Unit,
+    nativeDigital: Boolean = false,
 ) {
     val listState = rememberLazyListState()
     LazyRow(
@@ -401,7 +419,7 @@ private fun TypefaceChooserCardRow(
     ) {
         items(WidgetFontFamily.entries, key = { it.name }) { fontOption ->
             val selected = fontOption == value
-            val fontFam = fontOption.toComposeFontFamily()
+            val fontFam = if (nativeDigital) rememberDigitalNativeFont(fontOption) else fontOption.toComposeFontFamily()
 
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -539,6 +557,7 @@ private fun DigitalControls(
         SectionHeader("Typeface")
         TypefaceChooserCardRow(
             value = config.digitalFont,
+            nativeDigital = true,
             onSelect = { newFont ->
                 val newWeights = when (newFont) {
                     WidgetFontFamily.GOOGLE_SANS, WidgetFontFamily.GOOGLE_SANS_NORMAL -> listOf(
@@ -559,6 +578,13 @@ private fun DigitalControls(
                 onUpdate(config.copy(digitalFont = newFont, digitalWeight = safeWeight))
             },
         )
+
+        val effectiveFont = rememberDigitalProfile(config.digitalFont, config.digitalWeight)
+        if (effectiveFont.isFallback) {
+            Text(effectiveFont.description, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+        }
 
         SectionHeader("Weight")
         Box(modifier = Modifier.animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))) {
@@ -1329,7 +1355,7 @@ private fun DigitalPreview(
                 .padding(6.dp)
                 .fillMaxSize(),
         ) {
-            val fontFam = config.digitalFont.toComposeFontFamily(config.digitalWeight.weightInt)
+            val fontFam = rememberDigitalNativeFont(config.digitalFont, config.digitalWeight)
             val targetWeight = FontWeight(config.digitalWeight.weightInt)
 
             val timeFontSize by animateFloatAsState(
@@ -1397,6 +1423,7 @@ private fun DigitalPreview(
                                     text = stackedAnnotatedText,
                                     style = MaterialTheme.typography.displayLargeEmphasized.copy(
                                         fontFamily = fontFam,
+                                        fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
                                         fontWeight = targetWeight,
                                         fontSize = timeFontSize.sp,
                                         lineHeight = (timeFontSize * stackedLineHeightMultiplier).sp,
@@ -1414,6 +1441,7 @@ private fun DigitalPreview(
                                         text = "08",
                                         style = MaterialTheme.typography.displayLargeEmphasized.copy(
                                             fontFamily = fontFam,
+                                            fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
                                             fontWeight = targetWeight,
                                             fontSize = timeFontSize.sp,
                                         ),
@@ -1423,6 +1451,7 @@ private fun DigitalPreview(
                                         text = ":",
                                         style = MaterialTheme.typography.displayLargeEmphasized.copy(
                                             fontFamily = fontFam,
+                                            fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
                                             fontWeight = targetWeight,
                                             fontSize = timeFontSize.sp,
                                         ),
@@ -1432,6 +1461,7 @@ private fun DigitalPreview(
                                         text = if (config.showSeconds && !isCompact) "30:45" else "30",
                                         style = MaterialTheme.typography.displayLargeEmphasized.copy(
                                             fontFamily = fontFam,
+                                            fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
                                             fontWeight = targetWeight,
                                             fontSize = timeFontSize.sp,
                                         ),
@@ -1472,7 +1502,8 @@ private fun DigitalPreview(
                                             text = "MON",
                                             style = MaterialTheme.typography.titleMedium.copy(
                                                 fontFamily = fontFam,
-                                                fontWeight = FontWeight.SemiBold,
+                                                fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
+                                                fontWeight = targetWeight,
                                             ),
                                             color = dayColor,
                                         )
@@ -1482,7 +1513,8 @@ private fun DigitalPreview(
                                             text = "OCT 27",
                                             style = MaterialTheme.typography.titleMedium.copy(
                                                 fontFamily = fontFam,
-                                                fontWeight = FontWeight.SemiBold,
+                                                fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
+                                                fontWeight = targetWeight,
                                             ),
                                             color = dateColor,
                                         )
@@ -1496,7 +1528,8 @@ private fun DigitalPreview(
                                                 text = "MON",
                                                 style = MaterialTheme.typography.titleMedium.copy(
                                                     fontFamily = fontFam,
-                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
+                                                    fontWeight = targetWeight,
                                                 ),
                                                 color = dayColor,
                                             )
@@ -1504,7 +1537,8 @@ private fun DigitalPreview(
                                                 text = ", ",
                                                 style = MaterialTheme.typography.titleMedium.copy(
                                                     fontFamily = fontFam,
-                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
+                                                    fontWeight = targetWeight,
                                                 ),
                                                 color = dateColor,
                                             )
@@ -1512,7 +1546,8 @@ private fun DigitalPreview(
                                                 text = "OCT 27",
                                                 style = MaterialTheme.typography.titleMedium.copy(
                                                     fontFamily = fontFam,
-                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.None,
+                                                    fontWeight = targetWeight,
                                                 ),
                                                 color = dateColor,
                                             )
