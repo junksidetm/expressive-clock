@@ -1,0 +1,82 @@
+name: Clock local debug APK upload
+run-name: Local APK ${{ inputs.build_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Verified local snapshot ID
+        required: true
+        type: string
+      sha256:
+        description: Expected APK SHA-256
+        required: true
+        type: string
+permissions: {}
+concurrency:
+  group: local-apk-${{ inputs.build_id }}
+  cancel-in-progress: false
+jobs:
+  upload:
+    # One-job runner with a unique per-build label. Never a permanently registered service.
+    runs-on: ${{ format('ec-apk-{0}', inputs.build_id) }}
+    timeout-minutes: 5
+    steps:
+      - name: Validate and snapshot the local APK (no repository checkout)
+        env:
+          BUILD_ID: ${{ inputs.build_id }}
+          EXPECTED_SHA: ${{ inputs.sha256 }}
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,re,shutil,tempfile,time
+          from pathlib import Path
+          bid=os.environ['BUILD_ID']; expected=os.environ['EXPECTED_SHA']
+          assert re.fullmatch(r'[a-f0-9]{32}',bid)
+          assert re.fullmatch(r'[a-f0-9]{64}',expected)
+          folder=Path.home()/'.local/state/expressive-clock/apk-delivery'/bid
+          assert not folder.is_symlink()
+          receipt=json.loads((folder/'receipt.json').read_text())
+          assert receipt['build_id']==bid and receipt['sha256']==expected
+          assert receipt['build']=='success' and receipt['test_failures']==0
+          assert 0 <= time.time()-receipt['built_epoch'] <= 3600
+          source=folder/'ExpressiveClock-debug.apk'
+          assert source.is_file() and not source.is_symlink()
+          dest=Path(tempfile.mkdtemp(prefix='ec-apk-',dir=os.environ['RUNNER_TEMP']))/source.name
+          shutil.copyfile(source,dest)
+          assert hashlib.sha256(dest.read_bytes()).hexdigest()==expected
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write(f'APK_PATH={dest}\n')
+          PY
+      - name: Upload raw APK to Actions (seven-day retention)
+        id: apk
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          path: ${{ env.APK_PATH }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+      - name: Write trusted build manifest
+        env:
+          BUILD_ID: ${{ inputs.build_id }}
+          APK_ARTIFACT_ID: ${{ steps.apk.outputs.artifact-id }}
+        run: |
+          python3 - <<'PYCODE'
+          import json,os
+          from pathlib import Path
+          r=json.loads((Path.home()/'.local/state/expressive-clock/apk-delivery'/os.environ['BUILD_ID']/'receipt.json').read_text())
+          m={k:r[k] for k in ('build_id','sha256','built_at','package_name','certificate_sha256','version_code','version_name','apk_bytes')}
+          m.update(schema=1,run_id=int(os.environ['GITHUB_RUN_ID']),artifact_id=int(os.environ['APK_ARTIFACT_ID']))
+          target=Path(os.environ['APK_PATH']).parent/'build-manifest.json'
+          target.write_text(json.dumps(m))
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write(f'MANIFEST_PATH={target}\n')
+          PYCODE
+      - name: Upload build manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          path: ${{ env.MANIFEST_PATH }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove temporary runner copies
+        if: always()
+        run: |
+          if [ -n "$APK_PATH" ]; then rm -f -- "$APK_PATH"; fi
+          if [ -n "$MANIFEST_PATH" ]; then rm -f -- "$MANIFEST_PATH"; fi
