@@ -56,6 +56,8 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsTopHeight
@@ -68,6 +70,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CalendarMonth
@@ -321,6 +324,13 @@ fun SettingsScreen(
 
             if (category == null || category == SettingsCategory.ALARMS) SettingsCard(title = "Alarms") {
                 SettingsNavigateRow(
+                    icon = Icons.Outlined.Schedule,
+                    title = "Alarm card time format",
+                    subtitle = if (settings.alarms.cards24Hour) "24-hour" else "12-hour",
+                    onClick = { picker = SettingsPicker.ALARM_CARD_FORMAT },
+                )
+                SettingsDivider()
+                SettingsNavigateRow(
                     icon = Icons.Outlined.NotificationsNone,
                     title = "Silence after",
                     subtitle = minutesLabel(settings.alarms.silenceAfterMinutes),
@@ -340,6 +350,8 @@ fun SettingsScreen(
                     subtitle = settings.alarms.weekStart.label,
                     onClick = { picker = SettingsPicker.WEEK_START },
                 )
+
+
             }
 
             if (category == null || category == SettingsCategory.TIMERS) SettingsCard(title = "Timers") {
@@ -529,6 +541,17 @@ fun SettingsScreen(
                     picker = null
                 },
             )
+            SettingsPicker.ALARM_CARD_FORMAT -> ChoicePickerDialog(
+                title = "Alarm card time format",
+                value = settings.alarms.cards24Hour,
+                options = listOf(false, true),
+                label = { if (it) "24-hour" else "12-hour" },
+                onDismiss = { picker = null },
+                onSelect = { value ->
+                    onChange { it.copy(alarms = it.alarms.copy(cards24Hour = value)) }
+                    picker = null
+                },
+            )
             SettingsPicker.SILENCE -> ChoicePickerDialog(
                 title = "Silence after",
                 value = settings.alarms.silenceAfterMinutes,
@@ -592,6 +615,8 @@ fun SettingsScreen(
 
     if (showAccessibilityPromptDialog) {
         AlertDialog(
+        properties = DialogProperties(usePlatformDefaultWidth = !compactSettingsDialog()),
+        modifier = if (compactSettingsDialog()) Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth() else Modifier,
             onDismissRequest = { showAccessibilityPromptDialog = false },
             title = { Text("Accessibility service required") },
             text = {
@@ -897,6 +922,8 @@ private fun OverlayCalibrationDialog(
     val relH = (heightOffset - FACTORY_OVERLAY_HEIGHT_OFFSET).roundToInt()
 
     AlertDialog(
+        properties = DialogProperties(usePlatformDefaultWidth = !compactSettingsDialog()),
+        modifier = if (compactSettingsDialog()) Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth() else Modifier,
         onDismissRequest = onDismiss,
         title = { Text("Overlay position & size calibration") },
         confirmButton = {
@@ -999,7 +1026,7 @@ private fun OverlayCalibrationDialog(
     )
 }
 
-private enum class SettingsPicker { THEME, SILENCE, SNOOZE, WEEK_START, PRIVACY, PRESETS, STARTUP_PAGE }
+private enum class SettingsPicker { ALARM_CARD_FORMAT, THEME, SILENCE, SNOOZE, WEEK_START, PRIVACY, PRESETS, STARTUP_PAGE }
 
 @Composable
 private fun DefaultStartupPageDialog(
@@ -1008,6 +1035,8 @@ private fun DefaultStartupPageDialog(
     onSelect: (DefaultStartupPage) -> Unit,
 ) {
     AlertDialog(
+        properties = DialogProperties(usePlatformDefaultWidth = !compactSettingsDialog()),
+        modifier = if (compactSettingsDialog()) Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth() else Modifier,
         onDismissRequest = onDismiss,
         title = { Text("Default startup page") },
         confirmButton = {},
@@ -1360,11 +1389,13 @@ private fun <T> ChoicePickerDialog(
     onSelect: (T) -> Unit,
 ) {
     AlertDialog(
+        properties = DialogProperties(usePlatformDefaultWidth = !compactSettingsDialog()),
+        modifier = if (compactSettingsDialog()) Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth() else Modifier,
         onDismissRequest = onDismiss,
         title = { Text(title) },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 options.forEach { option ->
                     Row(
                         modifier = Modifier
@@ -1403,6 +1434,8 @@ private fun ThemePickerDialog(
 @Composable
 private fun PrivacyDialog(onDismiss: () -> Unit) {
     AlertDialog(
+        properties = DialogProperties(usePlatformDefaultWidth = !compactSettingsDialog()),
+        modifier = if (compactSettingsDialog()) Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth() else Modifier,
         onDismissRequest = onDismiss,
         title = { Text("Privacy") },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
@@ -1435,6 +1468,8 @@ fun TimerPresetsDialog(
     var editingIndex by remember { mutableStateOf<Int?>(null) }
 
     AlertDialog(
+        properties = DialogProperties(usePlatformDefaultWidth = !compactSettingsDialog()),
+        modifier = if (compactSettingsDialog()) Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth() else Modifier,
         onDismissRequest = onDismiss,
         title = { Text("Timer presets") },
         confirmButton = {
@@ -1499,7 +1534,7 @@ fun TimerPresetsDialog(
 }
 
 @Composable
-private fun SinglePresetEditDialog(
+internal fun SinglePresetEditDialog(
     title: String,
     initialSeconds: Int,
     onDismiss: () -> Unit,
@@ -1526,6 +1561,8 @@ private fun SinglePresetEditDialog(
     }
 
     AlertDialog(
+        properties = DialogProperties(usePlatformDefaultWidth = !compactSettingsDialog()),
+        modifier = if (compactSettingsDialog()) Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth() else Modifier,
         onDismissRequest = onDismiss,
         title = { Text(title) },
         confirmButton = {
@@ -1726,3 +1763,8 @@ private fun setPaintBlurEffect(paint: Paint, radius: Float, tileMode: Shader.Til
         method.invoke(paint, RenderEffect.createBlurEffect(radius, radius, tileMode))
     }
 }
+
+/** Material's minimum dialog width must yield to real side gutters in compact windows. */
+@Composable
+private fun compactSettingsDialog(): Boolean =
+    androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 360 || LocalDensity.current.fontScale > 1.1f

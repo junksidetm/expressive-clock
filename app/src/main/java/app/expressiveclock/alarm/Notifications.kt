@@ -191,6 +191,8 @@ object Notifications {
     private fun post(context: Context, id: Int, n: android.app.Notification) {
         val nm = NotificationManagerCompat.from(context)
         if (!nm.areNotificationsEnabled()) return
-        runCatching { nm.notify(id, n) }
+        try { nm.notify(id, n) }
+        catch (_: SecurityException) { /* Permission may be revoked between check and post. */ }
+        catch (error: RuntimeException) { android.util.Log.w("ClockNotification", "Unable to post notification", error) }
     }
 }

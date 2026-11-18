@@ -1,5 +1,6 @@
 package app.expressiveclock.ui
 
+
 import android.Manifest
 import android.os.Build
 import androidx.activity.compose.PredictiveBackHandler
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Timer
@@ -66,6 +68,7 @@ import app.expressiveclock.alarm.Notifications
 import app.expressiveclock.core.Alarm
 import app.expressiveclock.core.WorldCity
 import app.expressiveclock.data.DefaultStartupPage
+import app.expressiveclock.data.order
 import app.expressiveclock.ui.screens.AlarmsScreen
 import app.expressiveclock.ui.screens.OnboardingScreen
 import app.expressiveclock.ui.screens.StopwatchScreen
@@ -93,8 +96,11 @@ private val DOCK_CLEARANCE = 20.dp
  */
 private val DOCK_RESERVE = DOCK_HEIGHT + DOCK_CLEARANCE + 12.dp
 
+internal val LocalAlarmCards24Hour = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 enum class Tab(val label: String, val icon: ImageVector, val key: String) {
     ALARMS("Alarms", Icons.Outlined.Alarm, Notifications.TAB_ALARMS),
+    WORLD("World Clock", Icons.Outlined.Public, "world"),
     TIMERS("Timers", Icons.Outlined.HourglassEmpty, Notifications.TAB_TIMERS),
     STOPWATCH("Stopwatch", Icons.Outlined.Timer, Notifications.TAB_STOPWATCH),
 }
@@ -110,33 +116,47 @@ enum class Tab(val label: String, val icon: ImageVector, val key: String) {
  * Settings are always available from the top-right gear, regardless of which page is visible.
  */
 @Composable
-fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
+fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewModel = viewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val isSettingsLoaded by vm.isSettingsLoaded.collectAsStateWithLifecycle()
     val cities by vm.cities.collectAsStateWithLifecycle()
     val windowSizeInfo = rememberAppWindowSizeInfo()
 
+    val worldGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val worldCollapse = rememberSaveable { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val worldPresentation = remember(worldGrid) { app.expressiveclock.ui.screens.WorldClockPresentation(worldGrid, worldCollapse) }
+    val analogueMotion = rememberSaveable(stateSaver = app.expressiveclock.ui.screens.ClockHandMotionSaver) {
+        mutableStateOf(app.expressiveclock.ui.screens.ClockHandMotion(java.time.ZoneId.systemDefault()))
+    }
     ClockTheme(settings.theme) {
-        CompositionLocalProvider(LocalAppWindowSizeInfo provides windowSizeInfo) {
+        CompositionLocalProvider(LocalAppWindowSizeInfo provides windowSizeInfo,
+            app.expressiveclock.ui.screens.LocalWorldClockPresentation provides worldPresentation,
+            app.expressiveclock.ui.screens.LocalClockHandMotion provides analogueMotion) {
             val defaultTab = when (settings.defaultStartupPage) {
                 DefaultStartupPage.ALARMS -> Tab.ALARMS
+                DefaultStartupPage.WORLD -> Tab.WORLD
                 DefaultStartupPage.TIMER -> Tab.TIMERS
                 DefaultStartupPage.STOPWATCH -> Tab.STOPWATCH
             }
 
         var tab by rememberSaveable { mutableStateOf<Tab?>(null) }
+        var handledStartRequest by rememberSaveable { mutableStateOf<Long?>(null) }
 
         // Hydrate startup tab once settings load from DataStore on cold start
-        LaunchedEffect(isSettingsLoaded, startTab) {
-            if (isSettingsLoaded && tab == null) {
-                tab = startTab?.let { k -> Tab.entries.firstOrNull { it.key == k } } ?: defaultTab
-            } else if (startTab != null) {
-                // Explicit navigation (Dynamic Island / Notification tap)
-                startTab.let { k -> Tab.entries.firstOrNull { it.key == k } }?.let { tab = it }
-            }
+        LaunchedEffect(isSettingsLoaded, startTab, startRequestId) {
+            val navigation = resolveStartupNavigation(tab, startTab, startRequestId, handledStartRequest,
+                isSettingsLoaded, defaultTab)
+            tab = navigation.tab
+            handledStartRequest = navigation.handledRequestId
         }
 
         val activeTab = tab ?: startTab?.let { k -> Tab.entries.firstOrNull { it.key == k } } ?: defaultTab
+        LaunchedEffect(activeTab) {
+            if (activeTab != Tab.WORLD) {
+                worldPresentation.deletionSelection.value = emptySet()
+                worldPresentation.deletionConfirmation.value = false
+            }
+        }
 
         var editing by remember { mutableStateOf<Alarm?>(null) }
         var showNewAlarmPicker by remember { mutableStateOf(false) }
@@ -148,6 +168,17 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
         var showSettings by rememberSaveable { mutableStateOf(false) }
         val settingsProgress = remember { Animatable(0f) }
         val scope = rememberCoroutineScope()
+        val wideClockPages = app.expressiveclock.ui.screens.useWideClockPages(
+            windowSizeInfo.screenWidthDp.value, windowSizeInfo.screenHeightDp.value,
+            androidx.compose.ui.platform.LocalDensity.current.fontScale)
+        // A stable host keeps the wide clock alive through tab changes and responsive relayout.
+        // Alarm and World remain independent selected destinations, including startup/intent routing.
+        val contentTab = if (activeTab == Tab.WORLD) Tab.ALARMS else activeTab
+        var lastClockTab by rememberSaveable { mutableStateOf(if (activeTab == Tab.WORLD) Tab.WORLD else Tab.ALARMS) }
+        val clockDestination = if (activeTab == Tab.ALARMS || activeTab == Tab.WORLD) activeTab else lastClockTab
+        androidx.compose.runtime.SideEffect {
+            if (activeTab == Tab.ALARMS || activeTab == Tab.WORLD) lastClockTab = activeTab
+        }
 
         fun openSettings() {
             showSettings = true
@@ -188,6 +219,14 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
             }
         }
         val snackbar = remember { SnackbarHostState() }
+        fun saveWithConfirmation(draft: Alarm) {
+            vm.saveAlarm(draft) { saved ->
+                val now = java.time.ZonedDateTime.now()
+                saved.nextFire(now)?.let { next ->
+                    scope.launch { snackbar.showSnackbar("Alarm in ${app.expressiveclock.core.humanUntil(now, next)}") }
+                }
+            }
+        }
 
         // Asked once, on first composition. Denying it costs the notifications and nothing else.
         // The alarm still rings, because the ringer is a foreground service and audio, not a post.
@@ -239,9 +278,10 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
                 Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
-            snackbarHost = { SnackbarHost(snackbar) },
+            snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = DOCK_RESERVE)) },
             topBar = {
-                if (activeTab == Tab.ALARMS && alarmSelectionCount > 0) {
+                if ((activeTab == Tab.ALARMS && alarmSelectionCount > 0) ||
+                    (activeTab == Tab.WORLD && worldPresentation.deletionSelection.value.isNotEmpty())) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -251,9 +291,16 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
                         contentAlignment = Alignment.Center,
                     ) {
                         SelectionToolbar(
-                            selectedCount = alarmSelectionCount,
-                            onClearSelection = { clearSelectionSignal++ },
-                            onDeleteClick = { deleteClickSignal++ },
+                            selectedCount = if (activeTab == Tab.WORLD) worldPresentation.deletionSelection.value.size else alarmSelectionCount,
+                            onClearSelection = {
+                                if (activeTab == Tab.WORLD) worldPresentation.deletionSelection.value = emptySet()
+                                else clearSelectionSignal++
+                            },
+                            onDeleteClick = {
+                                if (activeTab == Tab.WORLD) worldPresentation.deletionConfirmation.value = true
+                                else deleteClickSignal++
+                            },
+                            deleteDescription = if (activeTab == Tab.WORLD) "Delete selected locations" else "Delete selected alarms",
                         )
                     }
                 } else {
@@ -295,7 +342,7 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
 
           GlassBackdrop(Modifier.fillMaxSize()) {
             AnimatedContent(
-                targetState = activeTab,
+                targetState = contentTab,
                 transitionSpec = {
                     val forward = targetState.ordinal > initialState.ordinal
                     slideInHorizontally(
@@ -310,54 +357,54 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
                 when (current) {
                     Tab.ALARMS -> {
                         val alarms by vm.alarms.collectAsStateWithLifecycle()
-                        AlarmsScreen(
-                            alarms = alarms,
-                            weekStart = settings.alarms.weekStart,
-                            staggerEntranceToken = isPostOnboardingStaggerToken,
-                            onStaggerConsumed = { isPostOnboardingStaggerToken = 0 },
-                            onToggle = vm::toggleAlarm,
-                            onEdit = { editing = it },
-                            onAddAlarm = { showNewAlarmPicker = true },
-                            onDeleteAlarms = { vm.deleteAlarms(it) },
-                            onSelectionCountChange = { count ->
-                                alarmSelectionCount = count
-                            },
-                            clearSelectionSignal = clearSelectionSignal,
-                            deleteClickSignal = deleteClickSignal,
-                            editingAlarm = editing,
-                            showNewAlarmPicker = showNewAlarmPicker,
-                            onSaveAlarm = { alarm ->
-                                vm.saveAlarm(alarm)
-                                editing = null
-                                showNewAlarmPicker = false
-                            },
-                            onDismissInline = {
-                                editing = null
-                                showNewAlarmPicker = false
-                            },
-                            cities = cities,
-                            selectedCityZoneId = selectedWorldCityZoneId,
-                            onSelectCity = { city -> selectedWorldCityZoneId = city.zone.id },
-                            onAddCity = { showAddCitySheet = true },
-                            onShowLocalTime = { selectedWorldCityZoneId = null },
-                            showCityPicker = showAddCitySheet,
-                            cityPickerContent = {
-                                    val now by rememberWallTicker()
-                                    AddCitySheet(
-                                        existing = cities,
-                                        nowUtcMillis = now,
-                                        inline = true,
-                                        onAdd = { city ->
-                                            vm.addCity(city)
-                                            selectedWorldCityZoneId = city.zone.id
-                                            showAddCitySheet = false
-                                        },
-                                        onDismiss = { showAddCitySheet = false },
-                                    )
-                            },
-                            contentPadding = body,
-                        )
+                        val alarmCards: @Composable (Modifier, Boolean, PaddingValues) -> Unit = { layout, single, insets ->
+                            CompositionLocalProvider(LocalAlarmCards24Hour provides settings.alarms.cards24Hour) {
+                                AlarmsScreen(alarms = alarms, weekStart = settings.alarms.weekStart,
+                                    staggerEntranceToken = isPostOnboardingStaggerToken,
+                                    onStaggerConsumed = { isPostOnboardingStaggerToken = 0 },
+                                    onToggle = vm::toggleAlarm, onEdit = { editing = it },
+                                    onAddAlarm = { showNewAlarmPicker = true },
+                                    onDeleteAlarms = { vm.deleteAlarms(it) },
+                                    onSelectionCountChange = { alarmSelectionCount = it },
+                                    clearSelectionSignal = clearSelectionSignal, deleteClickSignal = deleteClickSignal,
+                                    editingAlarm = editing, widePane = single,
+                                    contentPadding = insets, modifier = layout)
+                            }
+                        }
+                        if (wideClockPages) {
+                            app.expressiveclock.ui.screens.WideClockPages(
+                                worldSelected = clockDestination == Tab.WORLD,
+                                cities = cities, selectedZoneId = selectedWorldCityZoneId,
+                                onSelectCity = { selectedWorldCityZoneId = it.zone.id },
+                                onShowLocalTime = { selectedWorldCityZoneId = null },
+                                alarmContent = { alarmCards(it, true, PaddingValues(vertical = 8.dp)) },
+                                showAlarmEditor = editing != null,
+                                alarmEditor = {
+                                    app.expressiveclock.ui.screens.InlineAlarmEditorPanel(
+                                        editingAlarm = editing,
+                                        weekStart = settings.alarms.weekStart,
+                                        order = settings.alarms.weekStart.order(app.expressiveclock.ui.sheets.systemFirstDay()),
+                                        onSave = { saveWithConfirmation(it); editing = null; showNewAlarmPicker = false },
+                                        onCancel = { editing = null; showNewAlarmPicker = false },
+                                        onDelete = { vm.deleteAlarms(setOf(it)); editing = null; showNewAlarmPicker = false })
+                                },
+                                modifier = Modifier.padding(body))
+                        } else {
+                            AnimatedContent(clockDestination, transitionSpec = {
+                                val forward = targetState.ordinal > initialState.ordinal
+                                slideInHorizontally { if (forward) it else -it } + fadeIn() togetherWith
+                                    slideOutHorizontally { if (forward) -it else it } + fadeOut()
+                            }, label = "phoneClockTab") { phoneTab ->
+                                if (phoneTab == Tab.WORLD) app.expressiveclock.ui.screens.WorldClockPanel(
+                                    flatPortrait = true, cities = cities, selectedZoneId = selectedWorldCityZoneId,
+                                    onSelectCity = { selectedWorldCityZoneId = it.zone.id },
+                                    onShowLocalTime = { selectedWorldCityZoneId = null }, modifier = Modifier.padding(body))
+                                else alarmCards(Modifier, false, PaddingValues(start = 16.dp, end = 16.dp,
+                                    top = padding.calculateTopPadding(), bottom = underDock))
+                            }
+                        }
                     }
+                    Tab.WORLD -> Unit // World shares the stable host above, never its destination state.
 
                     Tab.TIMERS -> {
                         val timer by vm.timer.collectAsStateWithLifecycle()
@@ -372,6 +419,15 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
                             onBackspace = vm::backspace,
                             onResetDraft = vm::resetTimerDraft,
                             onPreset = vm::setTimerPreset,
+                            onEditPreset = { index, seconds ->
+                                vm.updateSettings { current ->
+                                    current.copy(timers = current.timers.copy(
+                                        presets = current.timers.presets.mapIndexed { presetIndex, value ->
+                                            if (presetIndex == index) seconds else value
+                                        },
+                                    ))
+                                }
+                            },
                             onStart = { vm.startTimer() },
                             onPauseResume = { vm.pauseOrResumeTimer() },
                             onAddTen = { vm.addTenSeconds() },
@@ -396,14 +452,13 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
             }
 
             ClockDock(
-                destinations = listOf(Tab.ALARMS, Tab.TIMERS, Tab.STOPWATCH),
+                destinations = listOf(Tab.ALARMS, Tab.WORLD, Tab.TIMERS, Tab.STOPWATCH),
                 selected = activeTab,
                 onSelect = { tab = it },
-                // Only alarms need the detached action button. Timers and Stopwatch create
-                // their content directly from the screen, so the dock stays visually centered.
-                showAdd = activeTab == Tab.ALARMS,
-                addLabel = "Add alarm",
-                onAdd = { showNewAlarmPicker = true },
+                // Timer and Stopwatch retain their existing in-content actions.
+                showAdd = activeTab == Tab.ALARMS || activeTab == Tab.WORLD,
+                addLabel = if (activeTab == Tab.WORLD) "Add Location" else "Add alarm",
+                onAdd = { if (activeTab == Tab.WORLD) showAddCitySheet = true else showNewAlarmPicker = true },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
@@ -439,35 +494,34 @@ fun ClockApp(startTab: String? = null, vm: ClockViewModel = viewModel()) {
     }
 }
 
-        if (!windowSizeInfo.isExpanded) {
+        if (!wideClockPages) {
             editing?.let { draft ->
                 AlarmEditSheet(
                     initial = draft,
                     weekStart = settings.alarms.weekStart,
                     onDismiss = { editing = null },
-                    onSave = { vm.saveAlarm(it); editing = null },
+                    onSave = { saveWithConfirmation(it); editing = null },
                     onDelete = if (draft.id == 0L) null else ({ id -> vm.deleteAlarm(id) }),
-                )
-            }
-
-            if (showNewAlarmPicker) {
-                NewAlarmPickerSheet(
-                    initial = vm.blankAlarm(),
-                    weekStart = settings.alarms.weekStart,
-                    onDismiss = { showNewAlarmPicker = false },
-                    onSave = { alarm -> vm.saveAlarm(alarm); showNewAlarmPicker = false },
                 )
             }
         }
 
-        if (showAddCitySheet && !windowSizeInfo.isExpanded) {
+        if (showNewAlarmPicker) {
+            NewAlarmPickerSheet(
+                initial = vm.blankAlarm(),
+                weekStart = settings.alarms.weekStart,
+                onDismiss = { showNewAlarmPicker = false },
+                onSave = { alarm -> saveWithConfirmation(alarm); showNewAlarmPicker = false },
+            )
+        }
+
+        if (showAddCitySheet) {
             AddCitySheet(
                 existing = cities,
                 nowUtcMillis = System.currentTimeMillis(),
                 onAdd = { city: WorldCity ->
                     vm.addCity(city)
                     selectedWorldCityZoneId = city.zone.id
-                    showAddCitySheet = false
                 },
                 onDismiss = { showAddCitySheet = false },
             )

@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import app.expressiveclock.alarm.Notifications
@@ -22,14 +23,16 @@ class MainActivity : ComponentActivity() {
      * rather than through `onCreate`. Writing to state that the composition reads covers both.
      */
     private var startTab by mutableStateOf<String?>(null)
+    private var navigationRequestId by mutableLongStateOf(0L)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         startTab = intent?.getStringExtra(Notifications.EXTRA_TAB)
+        navigationRequestId = savedInstanceState?.getLong("navigationRequestId") ?: 0L
         // Edge-to-edge is enabled inside ClockTheme, where the effective dark/light state is known
         // and the system-bar icon contrast can be set to match it.
-        setContent { ClockApp(startTab = startTab) }
+        setContent { ClockApp(startTab = startTab, startRequestId = navigationRequestId) }
     }
 
     override fun onPostResume() {
@@ -41,5 +44,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         startTab = intent.getStringExtra(Notifications.EXTRA_TAB)
+        navigationRequestId++
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putLong("navigationRequestId", navigationRequestId)
     }
 }

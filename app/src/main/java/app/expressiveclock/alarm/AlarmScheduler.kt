@@ -50,7 +50,7 @@ object AlarmScheduler {
             return
         }
         val at = next.toInstant().toEpochMilli()
-        val fire = firePendingIntent(context, alarm.id)
+        val fire = firePendingIntent(context, alarm.id, at)
         if (canScheduleExact(context)) {
             // The second intent is what the *system* opens when the user taps the status-bar alarm
             // chip. That is the app, not the ringer; passing the ringer here would let a tap
@@ -60,6 +60,7 @@ object AlarmScheduler {
             // Degraded but not silent: a window alarm still rings, just not to the second.
             am.setWindow(AlarmManager.RTC_WAKEUP, at, 60_000L, fire)
         }
+        UpcomingAlarm.schedule(context, alarm, at)
     }
 
     fun scheduleAll(context: Context, alarms: List<Alarm>) {
@@ -69,15 +70,17 @@ object AlarmScheduler {
     fun cancel(context: Context, id: Long) {
         val am = context.getSystemService<AlarmManager>() ?: return
         am.cancel(firePendingIntent(context, id))
+        UpcomingAlarm.cancel(context, id)
     }
 
-    private fun firePendingIntent(context: Context, id: Long): PendingIntent =
+    private fun firePendingIntent(context: Context, id: Long, at: Long = 0): PendingIntent =
         PendingIntent.getBroadcast(
             context,
             id.toInt(),
             Intent(context, AlarmReceiver::class.java)
                 .setAction(AlarmReceiver.ACTION_FIRE)
-                .putExtra(AlarmReceiver.EXTRA_ID, id),
+                .putExtra(AlarmReceiver.EXTRA_ID, id)
+                .putExtra(UpcomingAlarm.AT, at),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
@@ -85,7 +88,9 @@ object AlarmScheduler {
         PendingIntent.getActivity(
             context,
             0,
-            context.packageManager.getLaunchIntentForPackage(context.packageName)!!,
+            Intent(context, app.expressiveclock.MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(Notifications.EXTRA_TAB, Notifications.TAB_ALARMS),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 }

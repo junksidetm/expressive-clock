@@ -1,5 +1,7 @@
 package app.expressiveclock.ui.sheets
 
+import app.expressiveclock.ui.responsive.persistentScrollEdges
+import app.expressiveclock.ui.screens.progressiveListEdgeMask
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
@@ -58,8 +60,18 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import app.expressiveclock.ui.elasticClickable
 import app.expressiveclock.ui.glass
@@ -112,17 +124,36 @@ fun AlarmPickerSheetContent(
     onCancel: () -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
+    modal: Boolean = false,
 ) {
+    val locale = LocalConfiguration.current.locales[0]
+    val density = LocalDensity.current
+    // Material's modal content insets already include the animated IME. Subtract that
+    // same inset from the body cap so the sheet keeps a visible top margin instead of
+    // growing to screen height. The drag handle in New/Edit Alarm is exactly 32dp.
+    val bottomInset = with(density) {
+        maxOf(WindowInsets.ime.getBottom(this), WindowInsets.navigationBars.getBottom(this)).toDp()
+    }
+    val maxBodyHeight = (LocalConfiguration.current.screenHeightDp.dp * .82f - bottomInset - 32.dp)
+        .coerceAtLeast(96.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(AlarmSheetShape)
-            .navigationBarsPadding()
+            .then(if (modal) Modifier.heightIn(max = maxBodyHeight) else Modifier.imePadding().navigationBarsPadding())
             .padding(horizontal = 22.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(4.dp))
 
+        val compactHeader = LocalConfiguration.current.screenWidthDp < 360 || density.fontScale > 1.1f
+        val heading: @Composable () -> Unit = {
+            Text(title, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                style = MaterialTheme.typography.titleLargeEmphasized,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp))
+        }
+        if (compactHeader) heading()
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -133,8 +164,11 @@ fun AlarmPickerSheetContent(
                 primary = false,
                 onClick = onCancel,
             )
-            Text(
+            if (!compactHeader) Text(
                 title,
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                maxLines = 2,
                 style = MaterialTheme.typography.titleLargeEmphasized,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -146,6 +180,11 @@ fun AlarmPickerSheetContent(
             )
         }
 
+        CompositionLocalProvider(LocalBringIntoViewSpec provides AlarmNameBringIntoViewSpec) {
+        val bodyScroll = rememberScrollState()
+        Column(Modifier.weight(1f, fill = false)
+            .persistentScrollEdges(bodyScroll),
+            horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(8.dp))
 
         Box(
@@ -211,7 +250,7 @@ fun AlarmPickerSheetContent(
         ) {
             weekOrder.forEach { day ->
                 DayChip(
-                    label = day.getDisplayName(DayTextStyle.NARROW, Locale.getDefault()),
+                    label = day.getDisplayName(DayTextStyle.NARROW, locale),
                     selected = day in days,
                     modifier = Modifier.weight(1f),
                     onClick = { onToggleDay(day) },
@@ -221,7 +260,7 @@ fun AlarmPickerSheetContent(
 
         Spacer(Modifier.height(8.dp))
 
-        AlarmNameCard(label = label, onLabelChange = onLabelChange)
+        AlarmNameCard(label = label, onLabelChange = onLabelChange, clearDefault = title == "New Alarm")
 
         Spacer(Modifier.height(8.dp))
 
@@ -232,12 +271,24 @@ fun AlarmPickerSheetContent(
             onVibrateChange = onVibrateChange,
         )
 
+
         if (showDelete) {
             Spacer(Modifier.height(8.dp))
             DeleteAlarmCard(onDelete = onDelete)
         }
 
         Spacer(Modifier.height(2.dp))
+        }
+        }
+    }
+}
+
+/** Keep the focused name visible with the smallest internal scroll; the header stays pinned. */
+private object AlarmNameBringIntoViewSpec : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = when {
+        offset < 0f -> offset
+        offset + size > containerSize -> offset + size - containerSize
+        else -> 0f
     }
 }
 
@@ -350,7 +401,7 @@ private fun AlarmWheel(
                 vertical = (TickerViewportHeight - TickerItemHeight) / 2,
             ),
             verticalArrangement = Arrangement.spacedBy(0.dp),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().progressiveListEdgeMask(1f, 1f),
         ) {
             items(
                 count = values.size * cycleCount,
@@ -456,7 +507,7 @@ private fun MeridiemTextButton(text: String, selected: Boolean, onClick: () -> U
         onClick = onClick,
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
         modifier = Modifier
-            .height(34.dp)
+            .height(48.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(
                 if (selected) MaterialTheme.colorScheme.primaryContainer
@@ -472,18 +523,8 @@ private fun MeridiemTextButton(text: String, selected: Boolean, onClick: () -> U
 }
 
 @Composable
-private fun AlarmNameCard(label: String, onLabelChange: (String) -> Unit) {
-    var isDefaultUntouched by remember(label) { mutableStateOf(label == "Alarm") }
-    var value by remember {
-        mutableStateOf(TextFieldValue(text = label, selection = TextRange(label.length)))
-    }
-
-    LaunchedEffect(label) {
-        if (value.text != label) {
-            value = TextFieldValue(text = label, selection = TextRange(label.length))
-            isDefaultUntouched = (label == "Alarm")
-        }
-    }
+private fun AlarmNameCard(label: String, onLabelChange: (String) -> Unit, clearDefault: Boolean) {
+    var defaultUntouched by remember { mutableStateOf(clearDefault && label == "Alarm") }
 
     Box(
         modifier = Modifier
@@ -516,22 +557,15 @@ private fun AlarmNameCard(label: String, onLabelChange: (String) -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 androidx.compose.foundation.text.BasicTextField(
-                    value = value,
-                    onValueChange = { newValue ->
-                        if (isDefaultUntouched && value.text == "Alarm" && newValue.text != "Alarm") {
-                            isDefaultUntouched = false
-                        }
-                        value = newValue
-                        onLabelChange(value.text)
-                    },
+                    value = label,
+                    onValueChange = { defaultUntouched = false; onLabelChange(it) },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { focusState ->
-                            if (focusState.isFocused && isDefaultUntouched && value.text == "Alarm") {
-                                isDefaultUntouched = false
-                                value = TextFieldValue("")
+                            if (focusState.isFocused && defaultUntouched) {
+                                defaultUntouched = false
                                 onLabelChange("")
                             }
                         },
@@ -566,9 +600,12 @@ private fun AlarmOptionsCard(
             OptionIconBubble(Icons.Outlined.MusicNote)
             Spacer(Modifier.width(12.dp))
             Text("Sound", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
             Text(
                 soundLabel,
+                modifier = Modifier.weight(1f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

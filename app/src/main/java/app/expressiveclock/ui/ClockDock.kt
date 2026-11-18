@@ -6,7 +6,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +19,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -61,11 +66,6 @@ fun ClockDock(
     val blue = MaterialTheme.colorScheme.primary
     val dockTint = if (dark) MaterialTheme.colorScheme.surfaceContainer.copy(alpha = .88f) else MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = .84f)
 
-    val dockShift by animateDpAsState(
-        targetValue = if (showAdd) 0.dp else (DOCK_HEIGHT + FAB_GAP) / 2,
-        animationSpec = spring(dampingRatio = 0.86f, stiffness = 560f),
-        label = "dockShift",
-    )
     val addAlpha by animateFloatAsState(
         targetValue = if (showAdd) 1f else 0f,
         animationSpec = tween(180),
@@ -77,20 +77,28 @@ fun ClockDock(
         label = "addScale",
     )
 
-    Box(
-        modifier = modifier,
+    BoxWithConstraints(
+        modifier = modifier.widthIn(max = DOCK_STAGE_WIDTH + 16.dp).fillMaxWidth().padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
+        val addSize = minOf(DOCK_HEIGHT, (maxWidth - 218.dp).coerceAtLeast(48.dp))
+        val dockWidth = minOf(DOCK_WIDTH, (maxWidth - addSize - FAB_GAP).coerceAtLeast(0.dp))
+        val dockShift by animateDpAsState(
+            targetValue = if (showAdd) 0.dp else (addSize + FAB_GAP) / 2,
+            animationSpec = spring(dampingRatio = 0.86f, stiffness = 560f),
+            label = "dockShift",
+        )
+
         Row(
             modifier = Modifier
-                .width(DOCK_STAGE_WIDTH)
+                .width(dockWidth + FAB_GAP + addSize)
                 .padding(horizontal = 0.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(FAB_GAP),
         ) {
             Box(
                 modifier = Modifier
-                    .width(DOCK_WIDTH)
+                    .width(dockWidth)
                     .height(DOCK_HEIGHT)
                     .graphicsLayer { translationX = dockShift.toPx() }
                     .luminousElasticClickable(
@@ -107,10 +115,10 @@ fun ClockDock(
                     .then(if (enableGlow) Modifier.blueGlow(RoundedCornerShape(DOCK_HEIGHT / 2)) else Modifier),
                 contentAlignment = Alignment.Center,
             ) {
-                BoxWithConstraints(Modifier.fillMaxSize()) {
+                BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
                     val selectedIndex = destinations.indexOf(selected).coerceAtLeast(0)
                     val itemWidth = maxWidth / destinations.size
-                    val indicatorSize = 50.dp
+                    val indicatorSize = minOf(50.dp, ((dockWidth - 16.dp) / 4 - 4.dp).coerceAtLeast(28.dp))
                     val selectedOffset by animateDpAsState(
                         targetValue = itemWidth * selectedIndex + (itemWidth - indicatorSize) / 2,
                         animationSpec = spring(dampingRatio = 0.84f, stiffness = 600f),
@@ -147,7 +155,7 @@ fun ClockDock(
 
             Box(
                 modifier = Modifier
-                    .size(DOCK_HEIGHT)
+                    .size(addSize)
                     .graphicsLayer {
                         alpha = addAlpha
                         scaleX = addScale
@@ -169,7 +177,13 @@ fun ClockDock(
                         shadowElevation = if (enableGlow) 18.dp else 0.dp,
                     )
                     .then(if (enableGlow) Modifier.blueGlow(CircleShape) else Modifier)
-                    .clearAndSetSemantics { contentDescription = addLabel },
+                    .clearAndSetSemantics {
+                        if (showAdd) {
+                            contentDescription = addLabel
+                            role = Role.Button
+                            onClick(label = addLabel) { onAdd(); true }
+                        }
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(31.dp))
@@ -190,6 +204,23 @@ private fun RowScope.DockItem(tab: Tab, selected: Boolean, iconColor: Color, onC
 
     LaunchedEffect(tapCount) {
         if (tapCount == 0) return@LaunchedEffect
+        if (tab == Tab.TIMERS) {
+            if (android.animation.ValueAnimator.areAnimatorsEnabled()) {
+                val target = ((rotation.value / 180f).toInt() + 1) * 180f
+                rotation.animateTo(target, tween(320))
+            }
+            rotation.snapTo(0f)
+            return@LaunchedEffect
+        }
+        if (tab == Tab.WORLD || tab == Tab.STOPWATCH) {
+            if (android.animation.ValueAnimator.areAnimatorsEnabled()) {
+                val target = ((rotation.value / 360f).toInt() + 1) * 360f
+                rotation.animateTo(target, tween(if (tab == Tab.WORLD) 600 else 420,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            }
+            rotation.snapTo(0f)
+            return@LaunchedEffect
+        }
         rotation.snapTo(0f)
         when (tab) {
             Tab.ALARMS -> {
@@ -198,8 +229,9 @@ private fun RowScope.DockItem(tab: Tab, selected: Boolean, iconColor: Color, onC
                 rotation.animateTo(-3f, tween(65))
                 rotation.animateTo(0f, tween(65))
             }
-            Tab.TIMERS -> rotation.animateTo(180f, tween(320))
-            Tab.STOPWATCH -> rotation.animateTo(360f, tween(420))
+            Tab.WORLD -> Unit
+            Tab.TIMERS -> Unit
+            Tab.STOPWATCH -> Unit
         }
         rotation.snapTo(0f)
     }
@@ -208,7 +240,9 @@ private fun RowScope.DockItem(tab: Tab, selected: Boolean, iconColor: Color, onC
         modifier = Modifier
             .weight(1f)
             .height(DOCK_HEIGHT)
-            .clickable(
+            .selectable(
+                selected = selected,
+                role = Role.Tab,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = {
@@ -218,6 +252,21 @@ private fun RowScope.DockItem(tab: Tab, selected: Boolean, iconColor: Color, onC
             ),
         contentAlignment = Alignment.Center,
     ) {
+        if (tab == Tab.WORLD) {
+            RotatingGlobe(
+                phase = { rotation.value },
+                tint = if (selected) MaterialTheme.colorScheme.onSurface else iconColor,
+                modifier = Modifier.size(27.dp).graphicsLayer { scaleX = selectedScale; scaleY = selectedScale }
+                    .clearAndSetSemantics { contentDescription = tab.label },
+            )
+        } else if (tab == Tab.STOPWATCH) {
+            StopwatchDockIcon(
+                phase = { rotation.value },
+                tint = if (selected) MaterialTheme.colorScheme.onSurface else iconColor,
+                modifier = Modifier.size(27.dp).graphicsLayer { scaleX = selectedScale; scaleY = selectedScale }
+                    .clearAndSetSemantics { contentDescription = tab.label },
+            )
+        } else {
         Icon(
             imageVector = tab.icon,
             contentDescription = tab.label,
@@ -228,17 +277,19 @@ private fun RowScope.DockItem(tab: Tab, selected: Boolean, iconColor: Color, onC
                     scaleX = selectedScale
                     scaleY = selectedScale
                     when (tab) {
+                        Tab.WORLD -> rotationZ = rotation.value
                         Tab.ALARMS -> rotationZ = rotation.value
                         Tab.TIMERS -> rotationZ = rotation.value
-                        Tab.STOPWATCH -> rotationZ = rotation.value
+                        Tab.STOPWATCH -> Unit
                     }
                     cameraDistance = 18f * density
                 },
         )
+        }
     }
 }
 
 val DOCK_HEIGHT = 72.dp
-private val DOCK_WIDTH = 204.dp
+private val DOCK_WIDTH = 252.dp
 private val FAB_GAP = 10.dp
 private val DOCK_STAGE_WIDTH = DOCK_WIDTH + FAB_GAP + DOCK_HEIGHT

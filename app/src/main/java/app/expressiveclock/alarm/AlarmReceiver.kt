@@ -27,7 +27,8 @@ class AlarmReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.Default).launch {
             try {
                 when (intent.action) {
-                    ACTION_FIRE -> fire(app, intent.getLongExtra(EXTRA_ID, -1L))
+                    ACTION_FIRE -> fire(app, intent.getLongExtra(EXTRA_ID, -1L), intent.getLongExtra(UpcomingAlarm.AT, 0))
+                    UpcomingAlarm.SHOW, UpcomingAlarm.SKIP -> UpcomingAlarm.receive(app, intent)
                     ACTION_TIMER_EXPIRED -> timerExpired(app)
                 }
             } finally {
@@ -36,38 +37,37 @@ class AlarmReceiver : BroadcastReceiver() {
         }
     }
 
-    private suspend fun fire(context: Context, id: Long) {
+    private suspend fun fire(context: Context, id: Long, at: Long) {
         val store = ClockStore(context)
-        val alarm = store.alarmsNow().firstOrNull { it.id == id } ?: return
-
-        // Clearing the snooze first matters: if the ring is what a snooze produced, leaving the
-        // stamp in place would make `nextFire` keep returning a moment in the past forever.
-        val cleared = store.alarmsNow().map { a ->
-            when {
-                a.id != id -> a
-                // A one-shot has now happened. Disarm it rather than leave a dead row armed. That
-                // holds *including* when this ring came from a snooze, the case an earlier version
-                // missed: the snooze is that alarm's last occurrence, not an extra one, so
-                // a one-shot snoozed at 06:45 and then dismissed at 06:55 must end up off. Pressing
-                // Snooze again re-arms it, which is what ClockActionReceiver does deliberately.
-                a.isOneShot -> a.copy(enabled = false, snoozedUntilMillis = null)
-                else -> a.copy(snoozedUntilMillis = null)
+        if (at > System.currentTimeMillis() + 1000) return
+        var firing: app.expressiveclock.core.Alarm? = null
+        val cleared = store.updateAlarms { list -> list.map { alarm ->
+            if (alarm.id != id || !alarm.enabled || (at > 0 && !UpcomingAlarm.matches(alarm, at))) alarm
+            else {
+                firing = alarm
+                alarm.copy(enabled = !alarm.isOneShot, snoozedUntilMillis = null, skippedOccurrenceMillis = at.takeIf { it > 0 } ?: alarm.skippedOccurrenceMillis,
+                    skippedOccurrenceDate = if (at > 0) java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                        else java.time.LocalDate.now())
             }
-        }
-        store.putAlarms(cleared)
+        } }
+        val alarm = firing ?: return
+        UpcomingAlarm.hide(context,id)
         cleared.firstOrNull { it.id == id }?.let { AlarmScheduler.schedule(context, it) }
 
         ContextCompat.startForegroundService(
             context,
             Intent(context, AlarmService::class.java)
                 .setAction(AlarmService.ACTION_START)
-                .putExtra(EXTRA_ID, alarm.id),
+                .putExtra(EXTRA_ID, alarm.id)
+                .putExtra(UpcomingAlarm.AT, at),
         )
     }
 
     private suspend fun timerExpired(context: Context) {
         val store = ClockStore(context)
         val timer = store.timerNow() ?: return
+        if (timer.state != TimerState.RUNNING ||
+            timer.remaining(android.os.SystemClock.elapsedRealtime()).toMillis() > 1000) return
         // Mark the timer as FINISHED so the full-screen finished screen is presented in the app
         store.putTimer(timer.copy(state = TimerState.FINISHED))
         Notifications.hideTimer(context)

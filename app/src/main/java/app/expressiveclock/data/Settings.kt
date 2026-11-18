@@ -24,6 +24,7 @@ data class AlarmSettings(
     /** Minutes a ringing alarm keeps going before it gives up. **0 means never.** */
     val silenceAfterMinutes: Int = 10,
     val snoozeMinutes: Int = 10,
+    val cards24Hour: Boolean = false,
     val weekStart: WeekStart = WeekStart.SYSTEM,
 )
 
@@ -87,6 +88,7 @@ enum class WeekStart(val label: String, val day: DayOfWeek?) {
 
 enum class DefaultStartupPage(val label: String, val tabKey: String) {
     ALARMS("Alarms", Notifications.TAB_ALARMS),
+    WORLD("World Clock", "world"),
     TIMER("Timer", Notifications.TAB_TIMERS),
     STOPWATCH("Stopwatch", Notifications.TAB_STOPWATCH);
 

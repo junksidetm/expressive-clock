@@ -17,6 +17,8 @@ abstract class LaunchTileService(private val tab: String) : TileService() {
         }
     }
 
+    // Intent overload is required below API 34; the PendingIntent API is guarded above it.
+    @android.annotation.SuppressLint("StartActivityAndCollapseDeprecated")
     override fun onClick() {
         super.onClick()
         val intent = Intent(this, MainActivity::class.java)

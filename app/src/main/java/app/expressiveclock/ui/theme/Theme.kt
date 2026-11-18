@@ -16,6 +16,9 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberUpdatedState
+import android.view.ViewTreeObserver
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -65,11 +68,12 @@ fun ClockTheme(
     val scheme = remember(base, amoled) { if (amoled) base.toAmoledBlack() else base }
 
     val activity = LocalActivity.current as? ComponentActivity
+    // AndroidX keeps its first configuration listener. Its detector must read the latest
+    // app override, not capture the system/default theme from before DataStore loads.
+    val currentDark = rememberUpdatedState(dark)
     LaunchedEffect(dark, activity) {
-        val bar = if (dark) {
-            SystemBarStyle.dark(AndroidColor.TRANSPARENT)
-        } else {
-            SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+        val bar = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT) {
+            currentDark.value
         }
         activity?.enableEdgeToEdge(statusBarStyle = bar, navigationBarStyle = bar)
         activity?.window?.let { window ->
@@ -79,6 +83,25 @@ fun ClockTheme(
                 window.isNavigationBarContrastEnforced = false
                 window.navigationBarDividerColor = AndroidColor.TRANSPARENT
             }
+        }
+    }
+
+    DisposableEffect(activity) {
+        val window = activity?.window
+        val decor = window?.decorView
+        // Splash dismissal and returning from another window can restore platform appearance.
+        // Apply on focus without polling or changing the user's chosen theme.
+        val listener = ViewTreeObserver.OnWindowFocusChangeListener { focused ->
+            if (focused && window != null && decor != null) {
+                WindowCompat.getInsetsController(window, decor).apply {
+                    isAppearanceLightStatusBars = !currentDark.value
+                    isAppearanceLightNavigationBars = !currentDark.value
+                }
+            }
+        }
+        decor?.viewTreeObserver?.addOnWindowFocusChangeListener(listener)
+        onDispose {
+            decor?.viewTreeObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener)
         }
     }
 

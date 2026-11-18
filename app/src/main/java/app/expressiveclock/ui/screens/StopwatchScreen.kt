@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.SubcomposeLayout
@@ -208,9 +209,13 @@ fun StopwatchScreen(
     val effectiveBottomPadding = if (displayedLaps.isNotEmpty()) {
         contentPadding.calculateBottomPadding() + 140.dp
     } else {
-        contentPadding.calculateBottomPadding()
+        contentPadding.calculateBottomPadding() + 24.dp
     }
 
+    BoxWithConstraints(modifier.fillMaxSize()) {
+    val availableFace = (maxHeight - contentPadding.calculateTopPadding() -
+        contentPadding.calculateBottomPadding() - 228.dp).coerceAtLeast(120.dp)
+    val compactFace = maxWidth < 360.dp || density.fontScale > 1f
     FixedEdgeBlurContainer(
         topInset = contentPadding.calculateTopPadding(),
         bottomInset = contentPadding.calculateBottomPadding(),
@@ -219,7 +224,7 @@ fun StopwatchScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = displayedLaps.isNotEmpty() || LocalAppWindowSizeInfo.current.isHeightCompact,
+            userScrollEnabled = true,
             contentPadding = PaddingValues(
                 top = contentPadding.calculateTopPadding(),
                 bottom = effectiveBottomPadding,
@@ -228,21 +233,17 @@ fun StopwatchScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item(key = "face") {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(540.dp)
-                        .graphicsLayer {
-                            scaleX = faceScale.value
-                            scaleY = faceScale.value
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    StopwatchFace(
-                        elapsedMillis = elapsed.toMillis(),
-                        running = stopwatch.running,
-                        onToggle = onToggle,
-                    )
+                BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    val diameter = minOf(maxWidth, STOPWATCH_FACE_SIZE, if (compactFace) availableFace else STOPWATCH_FACE_SIZE)
+                    val fitScale = diameter / STOPWATCH_FACE_SIZE
+                    Box(Modifier.fillMaxWidth().height(diameter + 130.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.requiredSize(STOPWATCH_FACE_SIZE).graphicsLayer {
+                            scaleX = fitScale * faceScale.value
+                            scaleY = fitScale * faceScale.value
+                        }) {
+                            StopwatchFace(elapsed.toMillis(), stopwatch.running, onToggle)
+                        }
+                    }
                 }
             }
             item(key = "controls") {
@@ -268,6 +269,8 @@ fun StopwatchScreen(
             }
         }
     }
+}
+
 }
 
 /** The dial and controls stay fixed; only the right-hand lap viewport scrolls. */
@@ -320,6 +323,8 @@ private fun ExpandedStopwatch(
             top = contentPadding.calculateTopPadding() + 8.dp,
             bottom = contentPadding.calculateBottomPadding(),
         ),
+        // The clock's radial illumination must fade beyond the face's pane bounds.
+        clipLeftPane = false,
         leftWeight = .58f,
         rightWeight = .42f,
         paneSpacing = 20.dp,
@@ -529,6 +534,7 @@ private fun StopwatchFace(elapsedMillis: Long, running: Boolean, onToggle: () ->
     Box(
         modifier = Modifier
             .size(STOPWATCH_FACE_SIZE)
+            .clockLighting(primary, MaterialTheme.colorScheme.surface.luminance() < .5f)
             .luminousElasticClickable(
                 shape = CircleShape,
                 maxStretchPercent = 0.04f,
@@ -595,12 +601,14 @@ private fun StopwatchFace(elapsedMillis: Long, running: Boolean, onToggle: () ->
                 Text(
                     "%02d:".format(minutes),
                     fontFamily = ClockFace.family(opticalSize = 34f, width = 100f, weight = 500, roundness = ClockFace.ROUNDED),
+                    style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum"),
                     fontSize = 42.sp,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     "%02d.%02d".format(seconds, hundredths),
                     fontFamily = ClockFace.family(opticalSize = 34f, width = 100f, weight = 500, roundness = ClockFace.ROUNDED),
+                    style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum"),
                     fontSize = 42.sp,
                     color = MaterialTheme.colorScheme.primary,
                 )

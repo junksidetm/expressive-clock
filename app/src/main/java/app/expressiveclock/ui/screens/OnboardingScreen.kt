@@ -1,5 +1,6 @@
 package app.expressiveclock.ui.screens
 
+import app.expressiveclock.ui.responsive.persistentScrollEdges
 import android.app.Activity
 import android.app.NotificationManager
 import android.Manifest
@@ -20,6 +21,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -57,6 +59,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -148,13 +151,14 @@ fun OnboardingScreen(
         refreshStates()
     }
 
+    val onboardingScroll = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(horizontal = 24.dp)
-            .verticalScroll(rememberScrollState()),
+            .persistentScrollEdges(onboardingScroll),
         horizontalAlignment = Alignment.Start,
     ) {
         Spacer(Modifier.height(28.dp))
@@ -375,7 +379,7 @@ private fun OnboardingSetupCard(
     isGranted: Boolean,
     onSetup: () -> Unit,
 ) {
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
@@ -383,6 +387,7 @@ private fun OnboardingSetupCard(
             .clickable(enabled = !isGranted, onClick = onSetup)
             .padding(16.dp),
     ) {
+        val stackHeader = maxWidth < 340.dp || LocalDensity.current.fontScale > 1.1f
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top,
@@ -409,11 +414,7 @@ private fun OnboardingSetupCard(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                val titleLabel: @Composable (Modifier) -> Unit = { modifier ->
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleMedium.copy(
@@ -421,9 +422,10 @@ private fun OnboardingSetupCard(
                             fontSize = 16.sp,
                         ),
                         color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = modifier,
                     )
-
+                }
+                val setupBadge: @Composable () -> Unit = {
                     // Set up / Already granted Button
                     Box(
                         modifier = Modifier
@@ -457,6 +459,18 @@ private fun OnboardingSetupCard(
                                 )
                             }
                         }
+                    }
+                }
+                if (stackHeader) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        titleLabel(Modifier.fillMaxWidth())
+                        setupBadge()
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        titleLabel(Modifier.weight(1f, fill = false))
+                        setupBadge()
                     }
                 }
 

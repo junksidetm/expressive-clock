@@ -185,7 +185,7 @@ fun WidePill(
     contentAlpha: Float = 1f,
     glow: Boolean = true,
 ) {
-    Box(
+    androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = modifier
             .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
             .height(height)
@@ -206,6 +206,13 @@ fun WidePill(
             .padding(horizontal = contentPaddingH),
         contentAlignment = Alignment.Center,
     ) {
+        val textStyle = if (compact) MaterialTheme.typography.titleMediumEmphasized else MaterialTheme.typography.headlineSmallEmphasized
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val labelWidth = measurer.measure(text, textStyle).size.width.toFloat()
+        val iconSpace = if (icon != null) (if (compact) 30.dp else 44.dp) else 0.dp
+        val room = with(density) { (maxWidth - iconSpace).toPx() }.coerceAtLeast(1f)
+        val fit = minOf(1f, room / labelWidth.coerceAtLeast(1f))
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.graphicsLayer { alpha = contentAlpha },
@@ -222,7 +229,7 @@ fun WidePill(
             if (text.isNotEmpty()) {
                 Text(
                     text,
-                    style = if (compact) MaterialTheme.typography.titleMediumEmphasized else MaterialTheme.typography.headlineSmallEmphasized,
+                    style = textStyle.copy(fontSize = textStyle.fontSize * fit),
                     color = content,
                     maxLines = 1,
                 )

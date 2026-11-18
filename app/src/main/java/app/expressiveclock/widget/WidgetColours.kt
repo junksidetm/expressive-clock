@@ -90,6 +90,7 @@ object WidgetColours {
         )
     }
 
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.S)
     private fun dynamic(context: Context, dark: Boolean): ColorScheme =
         if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
 

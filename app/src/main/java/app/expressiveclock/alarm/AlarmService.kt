@@ -5,10 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
-import android.media.AudioManager
-import android.media.MediaPlayer
-import android.media.RingtoneManager
-import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.VibrationEffect
@@ -27,6 +23,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The ringer.
@@ -45,8 +43,7 @@ import kotlinx.coroutines.launch
  * ## Audio
  *
  * `USAGE_ALARM` is the whole ballgame. It routes to the alarm stream, so the alarm sounds at alarm
- * volume rather than media volume, it survives Do Not Disturb, and it keeps playing when the user
- * is on a call. `setLooping` because an alarm that plays a four-second ringtone once is not one.
+ * volume rather than media volume, respecting system interruption policy. `setLooping` because an alarm that plays a four-second ringtone once is not one.
  *
  * ## Giving up
  *
@@ -56,9 +53,11 @@ import kotlinx.coroutines.launch
  */
 class AlarmService : Service() {
 
-    private var player: MediaPlayer? = null
+    private val sound by lazy { AlarmAudio(this) }
     private var vibrator: Vibrator? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val starts = Mutex()
+    private var active = false
     private var silenceJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -66,55 +65,61 @@ class AlarmService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Notifications.ensureChannels(this)
         when (intent?.action) {
-            ACTION_START -> startRinging(intent.getLongExtra(AlarmReceiver.EXTRA_ID, -1L))
-            ACTION_START_TIMER -> startTimerChime()
-            else -> stopSelf()
+            ACTION_START -> startRinging(intent.getLongExtra(AlarmReceiver.EXTRA_ID, -1L), intent.getLongExtra(UpcomingAlarm.AT, 0), startId)
+            ACTION_START_TIMER -> startTimerChime(startId)
+            else -> stopSelf(startId)
         }
         // Not sticky: a restarted ringer with no intent has no idea which alarm it is, and an
         // alarm that resurrects itself after the user killed the app is a bug report.
         return START_NOT_STICKY
     }
 
-    private fun startRinging(id: Long) {
+    private fun startRinging(id: Long, at: Long, startId: Int) {
         scope.launch {
-            val store = ClockStore(this@AlarmService)
-            val alarm = store.alarmsNow().firstOrNull { it.id == id }
-            val settings = store.settingsNow()
-            val label = alarm?.label?.ifBlank { null } ?: "Alarm"
-
-            foreground(ringingNotification(this@AlarmService, id, label))
-            val soundUri = alarm?.soundUri
-            if (soundUri != SILENT) {
-                play(soundUri?.let(Uri::parse) ?: defaultAlarmUri())
-            }
-            if (alarm?.vibrate != false) vibrate(ALARM_PATTERN)
-
-            silenceJob = launch {
-                // 0 is "Never". Multiplying it out would `delay(0)` and stop the service on the
-                // next dispatch, so the alarm would silence itself the instant it started ringing.
-                val minutes = settings.alarms.silenceAfterMinutes
-                if (minutes <= 0) return@launch
-                delay(minutes * 60_000L)
-                stopSelf()
+            starts.withLock {
+                val store = ClockStore(this@AlarmService)
+                val alarm = store.alarmsNow().firstOrNull { it.id == id }
+                if (alarm == null || (at > 0 && alarm.skippedOccurrenceMillis != at)) {
+                    // A stale start must neither resurrect a deleted alarm nor stop another ringer.
+                    if (!active) stopSelf(startId)
+                    return@launch
+                }
+                val settings = store.settingsNow()
+                ring(ringingNotification(this@AlarmService, id, alarm.label.ifBlank { "Alarm" }),
+                    alarm.soundUri, alarm.vibrate, ALARM_PATTERN, settings.alarms.silenceAfterMinutes)
             }
         }
     }
 
-    private fun startTimerChime() {
+    private fun startTimerChime(startId: Int) {
         scope.launch {
-            val settings = ClockStore(this@AlarmService).settingsNow()
-            foreground(timerNotification(this@AlarmService))
-            val soundUri = settings.timers.soundUri
-            if (soundUri != SILENT) {
-                play(soundUri?.let(Uri::parse) ?: defaultAlarmUri())
+            starts.withLock {
+                val store = ClockStore(this@AlarmService)
+                if (store.timerNow()?.state != app.expressiveclock.core.TimerState.FINISHED) {
+                    if (!active) stopSelf(startId)
+                    return@launch
+                }
+                val settings = store.settingsNow()
+                ring(timerNotification(this@AlarmService), settings.timers.soundUri,
+                    settings.timers.vibrate, TIMER_PATTERN, settings.alarms.silenceAfterMinutes)
             }
-            if (settings.timers.vibrate) vibrate(TIMER_PATTERN)
-            silenceJob = launch {
-                val minutes = settings.alarms.silenceAfterMinutes
-                if (minutes <= 0) return@launch
-                delay(minutes * 60_000L)
-                stopSelf()
-            }
+        }
+    }
+
+    private fun ring(notification: android.app.Notification, uri: String?, shouldVibrate: Boolean,
+                     pattern: LongArray, silenceMinutes: Int) {
+        silenceJob?.cancel()
+        sound.stop()
+        vibrator?.cancel()
+        foreground(notification)
+        active = true
+        if (uri != SILENT) sound.play(uri)
+        if (shouldVibrate) vibrate(pattern)
+        // This timeout belongs to the active ringer, not a pending replacement's load job.
+        silenceJob = scope.launch {
+            if (silenceMinutes <= 0) return@launch
+            delay(silenceMinutes * 60_000L)
+            stopSelf()
         }
     }
 
@@ -123,30 +128,6 @@ class AlarmService : Service() {
             startForeground(Notifications.ID_RINGING, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } else {
             startForeground(Notifications.ID_RINGING, n)
-        }
-    }
-
-    private fun play(uri: Uri) {
-        runCatching {
-            player = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                setDataSource(this@AlarmService, uri)
-                isLooping = true
-                prepare()
-                start()
-            }
-        }.onFailure {
-            // A ringtone the user picked can be deleted, or live on an unmounted SD card. Silence
-            // is not an acceptable alarm, so fall back rather than let the exception kill it.
-            runCatching {
-                player = MediaPlayer.create(this, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
-                    ?.apply { isLooping = true; start() }
-            }
         }
     }
 
@@ -166,19 +147,14 @@ class AlarmService : Service() {
     }
 
     override fun onDestroy() {
+        active = false
         silenceJob?.cancel()
-        runCatching { player?.stop() }
-        player?.release()
-        player = null
+        sound.stop()
         vibrator?.cancel()
         scope.cancel()
         NotificationManagerCompat.from(this).cancel(Notifications.ID_RINGING)
         super.onDestroy()
     }
-
-    private fun defaultAlarmUri(): Uri =
-        RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
 
     companion object {
         const val ACTION_START = "app.expressiveclock.RING"
@@ -202,6 +178,9 @@ class AlarmService : Service() {
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setOngoing(true)
                 .setAutoCancel(false)
+                // Android 14+ may allow ongoing notifications to be swiped away.
+                // Treat that explicit dismissal like the visible Dismiss action.
+                .setDeleteIntent(Notifications.broadcast(context, ClockActionReceiver.ACTION_DISMISS, 12, id))
                 // The full-screen intent is what wakes the device and puts the dismiss screen in
                 // front of a locked phone. It degrades to a heads-up banner where the permission
                 // is not held. That is still usable, since both actions are on the notification.
@@ -216,6 +195,7 @@ class AlarmService : Service() {
                 .setSmallIcon(R.drawable.ic_stat_timer)
                 .setContentTitle("Timer")
                 .setContentText("Time's up")
+                .setDeleteIntent(Notifications.broadcast(context, ClockActionReceiver.ACTION_TIMER_CANCEL, 25))
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

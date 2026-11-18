@@ -68,8 +68,24 @@ class ClockStore(private val context: Context) {
         context.prefs.edit { it[KEY_ALARMS] = encodeAlarms(list) }
     }
 
+    suspend fun updateAlarms(transform: (List<Alarm>) -> List<Alarm>): List<Alarm> {
+        var result = emptyList<Alarm>()
+        context.prefs.edit { p ->
+            result = transform(p[KEY_ALARMS]?.let(::parseAlarms) ?: SEED_ALARMS)
+            p[KEY_ALARMS] = encodeAlarms(result)
+        }
+        return result
+    }
+
     suspend fun putCities(list: List<WorldCity>) {
         context.prefs.edit { it[KEY_CITIES] = encodeCities(list) }
+    }
+
+    suspend fun updateCities(transform: (List<WorldCity>) -> List<WorldCity>) {
+        context.prefs.edit { p ->
+            val current = p[KEY_CITIES]?.let(::parseCities) ?: SEED_CITIES
+            p[KEY_CITIES] = encodeCities(transform(current).distinctBy { it.zone.id })
+        }
     }
 
     suspend fun putTimer(t: ClockTimer?) {
@@ -194,6 +210,7 @@ private fun Preferences.toSettings() = ClockSettings(
     alarms = AlarmSettings(
         silenceAfterMinutes = this[intPreferencesKey("silenceAfter")] ?: 10,
         snoozeMinutes = this[intPreferencesKey("snooze")] ?: 10,
+        cards24Hour = this[booleanPreferencesKey("alarmCards24Hour")] ?: false,
         weekStart = enumOr(this[stringPreferencesKey("weekStart")], WeekStart.SYSTEM),
     ),
     world = WorldClockSettings(
@@ -226,6 +243,7 @@ private fun Preferences.toSettings() = ClockSettings(
 )
 
 private fun androidx.datastore.preferences.core.MutablePreferences.writeSettings(s: ClockSettings) {
+    this[booleanPreferencesKey("alarmCards24Hour")] = s.alarms.cards24Hour
     this[intPreferencesKey("silenceAfter")] = s.alarms.silenceAfterMinutes
     this[intPreferencesKey("snooze")] = s.alarms.snoozeMinutes
     this[stringPreferencesKey("weekStart")] = s.alarms.weekStart.name
@@ -270,6 +288,8 @@ private fun encodeAlarms(list: List<Alarm>) = JSONArray().apply {
                 .put("vibrate", a.vibrate)
                 .apply { a.soundUri?.let { put("sound", it) } }
                 .apply { a.snoozedUntilMillis?.let { put("snoozed", it) } }
+                .apply { a.skippedOccurrenceMillis?.let { put("skippedOccurrence", it) } }
+                .apply { a.skippedOccurrenceDate?.let { put("skippedDate", it.toString()) } }
         )
     }
 }.toString()
@@ -288,6 +308,8 @@ private fun parseAlarms(s: String): List<Alarm> = runCatching {
             vibrate = o.optBoolean("vibrate", true),
             soundUri = o.optString("sound").takeIf { it.isNotEmpty() },
             snoozedUntilMillis = o.optLong("snoozed").takeIf { it > 0L },
+            skippedOccurrenceMillis = o.optLong("skippedOccurrence").takeIf { it > 0L },
+            skippedOccurrenceDate = runCatching { java.time.LocalDate.parse(o.optString("skippedDate")) }.getOrNull(),
         )
     }
 }.getOrDefault(emptyList())

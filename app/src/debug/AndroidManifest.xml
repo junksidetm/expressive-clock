@@ -1,0 +1,3 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <instrumentation android:name="app.expressiveclock.AlarmProbe" android:targetPackage="app.expressiveclock.debug" android:label="ADB alarm regression probe" />
+</manifest>

@@ -32,6 +32,10 @@ data class Alarm(
      * pending, which keeps every caller (scheduler, list, boot receiver) automatically correct.
      */
     val snoozedUntilMillis: Long? = null,
+    /** A dismissed/already-fired occurrence, without changing the repeat rule. */
+    val skippedOccurrenceMillis: Long? = null,
+    /** Retains the consumed calendar occurrence when the system zone changes. */
+    val skippedOccurrenceDate: LocalDate? = null,
 ) {
     val isOneShot: Boolean get() = days.isEmpty()
 
@@ -43,11 +47,12 @@ data class Alarm(
             if (snooze.isAfter(now)) return snooze
         }
         val todayAt = now.with(time).withSecond(0).withNano(0)
-        if (isOneShot) return if (todayAt.isAfter(now)) todayAt else todayAt.plusDays(1)
+        if (isOneShot) return (if (todayAt.isAfter(now)) todayAt else todayAt.plusDays(1))
+            .takeUnless { it.toInstant().toEpochMilli() == skippedOccurrenceMillis || it.toLocalDate() == skippedOccurrenceDate }
         // Seven candidates is enough: a repeating alarm always has one inside a week.
         return (0..7).asSequence()
             .map { todayAt.plusDays(it.toLong()) }
-            .firstOrNull { it.isAfter(now) && it.dayOfWeek in days }
+            .firstOrNull { it.isAfter(now) && it.dayOfWeek in days && it.toInstant().toEpochMilli() != skippedOccurrenceMillis && it.toLocalDate() != skippedOccurrenceDate }
     }
 
     /** The words the app prints: "Every day" / "Weekdays" / "Mon, Wed, Fri" / "Tomorrow". */

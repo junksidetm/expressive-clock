@@ -32,6 +32,7 @@ fun TwoPaneLayout(
     rightWeight: Float = 1f,
     paneSpacing: Dp = 24.dp,
     contentPaddingDp: Dp = 24.dp,
+    clipLeftPane: Boolean = true,
 ) {
     Row(
         modifier = modifier
@@ -44,7 +45,7 @@ fun TwoPaneLayout(
             modifier = Modifier
                 .weight(leftWeight)
                 .fillMaxHeight()
-                .clipToBounds(),
+                .then(if (clipLeftPane) Modifier.clipToBounds() else Modifier),
             contentAlignment = Alignment.Center,
             content = leftPane,
         )

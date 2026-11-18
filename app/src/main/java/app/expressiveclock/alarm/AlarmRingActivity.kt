@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.map
 import app.expressiveclock.data.ClockSettings
 import app.expressiveclock.data.ClockStore
 import app.expressiveclock.ui.rememberWallTicker
@@ -77,8 +78,9 @@ class AlarmRingActivity : ComponentActivity() {
         })
 
         setContent {
-            val settings by store.settings
-                .collectAsStateWithLifecycle(initialValue = ClockSettings())
+            val settingsFlow = androidx.compose.runtime.remember(store) { store.settings.map { it as ClockSettings? } }
+            val loadedSettings by settingsFlow.collectAsStateWithLifecycle(initialValue = null)
+            val settings = loadedSettings ?: return@setContent
             ClockTheme(settings.theme) {
                 Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
                     Ringing(
@@ -130,7 +132,7 @@ private fun Ringing(
     val now by rememberWallTicker()
     val time = LocalTime.now()
     val context = LocalContext.current
-    val is24Hour = DateFormat.is24HourFormat(context)
+    val is24Hour = app.expressiveclock.ui.rememberSystem24HourFormat()
 
     val formattedTime = if (is24Hour) {
         "%02d:%02d".format(time.hour, time.minute)

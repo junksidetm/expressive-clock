@@ -59,12 +59,11 @@ class ClockActionReceiver : BroadcastReceiver() {
         AlarmService.stop(context)
         val minutes = store.settingsNow().alarms.snoozeMinutes
         val due = System.currentTimeMillis() + minutes * 60_000L
-        val updated = store.alarmsNow().map {
+        val updated = store.updateAlarms { list -> list.map {
             // Re-arming matters for a one-shot: firing disabled it, and a snooze has to bring it
             // back or the second ring never happens.
             if (it.id == id) it.copy(snoozedUntilMillis = due, enabled = true) else it
-        }
-        store.putAlarms(updated)
+        } }
         updated.firstOrNull { it.id == id }?.let { AlarmScheduler.schedule(context, it) }
     }
 

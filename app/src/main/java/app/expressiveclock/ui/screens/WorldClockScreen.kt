@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -88,7 +89,7 @@ fun WorldClockScreen(
     modifier: Modifier = Modifier,
 ) {
     val use24h = when (settings.hourFormat) {
-        HourFormat.SYSTEM -> android.text.format.DateFormat.is24HourFormat(LocalContext.current)
+        HourFormat.SYSTEM -> app.expressiveclock.ui.rememberSystem24HourFormat()
         HourFormat.H12 -> false
         HourFormat.H24 -> true
     }
@@ -269,7 +270,11 @@ private fun CityRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .height(ROW_HEIGHT_DP.dp),
+                    .height(ROW_HEIGHT_DP.dp)
+                    .graphicsLayer {
+                        // The translucent glass must not reveal a delete icon behind the time at rest.
+                        alpha = if (state.dismissDirection == SwipeToDismissBoxValue.Settled) 0f else 1f
+                    },
             ) {
                 Box(Modifier.fillMaxSize().padding(end = 32.dp), Alignment.CenterEnd) {
                     Icon(
@@ -291,7 +296,7 @@ private fun CityRow(
                 .fillMaxWidth()
                 .glass(
                     shape = RoundedCornerShape(percent = 50),
-                    tint = Color.White.copy(alpha = .34f),
+                    tint = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f),
                     borderAlpha = .76f,
                 )
                 .padding(horizontal = 16.dp)

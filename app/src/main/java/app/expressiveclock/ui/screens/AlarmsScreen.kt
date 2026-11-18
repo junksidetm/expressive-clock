@@ -2,7 +2,6 @@ package app.expressiveclock.ui.screens
 
 import android.graphics.Paint
 import android.util.Log
-import app.expressiveclock.ui.WorldMapData
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -40,6 +39,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.os.Build
@@ -233,17 +234,8 @@ fun AlarmsScreen(
     clearSelectionSignal: Int = 0,
     deleteClickSignal: Int = 0,
     editingAlarm: Alarm? = null,
-    showNewAlarmPicker: Boolean = false,
-    onSaveAlarm: ((Alarm) -> Unit)? = null,
-    onDismissInline: (() -> Unit)? = null,
-    cities: List<WorldCity> = emptyList(),
-    selectedCityZoneId: String? = null,
-    onSelectCity: ((WorldCity) -> Unit)? = null,
-    onAddCity: (() -> Unit)? = null,
-    cityPickerContent: (@Composable () -> Unit)? = null,
-    showCityPicker: Boolean = false,
-    onShowLocalTime: () -> Unit = {},
     modifier: Modifier = Modifier,
+    widePane: Boolean = false,
 ) {
     // Track how many cards are revealed during first-launch post-onboarding stagger
     var visibleCardsCount by remember(staggerEntranceToken) {
@@ -345,43 +337,7 @@ fun AlarmsScreen(
 
     val windowSizeInfo = LocalAppWindowSizeInfo.current
 
-    if (windowSizeInfo.isExpanded) {
-        ExpandedAlarmsScreen(
-            alarms = alarms,
-            weekStart = weekStart,
-            order = order,
-            displayedAlarms = displayedAlarms,
-            exitingAlarmIds = exitingAlarmIds,
-            selectedIds = selectedIds,
-            inSelectionMode = inSelectionMode,
-            visibleCardsCount = visibleCardsCount,
-            editingAlarm = editingAlarm,
-            showNewAlarmPicker = showNewAlarmPicker,
-            onToggle = onToggle,
-            onEdit = onEdit,
-            onToggleSelect = { id ->
-                selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
-            },
-            onStartSelection = { id ->
-                selectedIds = selectedIds + id
-            },
-            onAddAlarm = { onAddAlarm?.invoke() },
-            onSaveAlarm = { alarm: Alarm -> onSaveAlarm?.invoke(alarm) },
-            onDismissInline = { onDismissInline?.invoke() },
-            cities = cities,
-            cityPickerContent = cityPickerContent,
-            showCityPicker = showCityPicker,
-            onShowLocalTime = onShowLocalTime,
-            selectedCityZoneId = selectedCityZoneId,
-            onSelectCity = { city -> onSelectCity?.invoke(city) },
-            onAddCity = { onAddCity?.invoke() },
-            onDeleteAlarms = onDeleteAlarms,
-            onSelectionCountChange = onSelectionCountChange,
-            contentPadding = contentPadding,
-            modifier = modifier,
-        )
-    } else {
-        FixedEdgeBlurContainer(
+    FixedEdgeBlurContainer(
             topInset = contentPadding.calculateTopPadding(),
             bottomInset = contentPadding.calculateBottomPadding(),
             modifier = modifier,
@@ -416,8 +372,12 @@ fun AlarmsScreen(
                         contentPadding = contentPadding,
                     )
                 } else {
+                    BoxWithConstraints(Modifier.fillMaxSize()) {
+                    val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
+                    val usableWidth = maxWidth - contentPadding.calculateLeftPadding(direction) - contentPadding.calculateRightPadding(direction)
+                    val columns = if (usableWidth >= 280.dp) 2 else 1
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
+                        columns = GridCells.Fixed(columns),
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = contentPadding,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -455,8 +415,9 @@ fun AlarmsScreen(
                             ) {
                                 AlarmTile(
                                     alarm = alarm,
+                                    maxTileWidth = if (columns == 1) 220.dp else Dp.Infinity,
                                     order = order,
-                                    selected = alarm.id in selectedIds,
+                                    selected = alarm.id in selectedIds || (widePane && editingAlarm?.id == alarm.id),
                                     inSelectionMode = inSelectionMode,
                                     onToggle = { onToggle(alarm.id) },
                                     onEdit = { onEdit(alarm) },
@@ -474,13 +435,13 @@ fun AlarmsScreen(
                             }
                         }
                     }
+                    }
                 }
             }
         }
-    }
 
     if (showDeleteConfirmSheet) {
-        DeleteAlarmsConfirmationSheet(
+        DeleteItemsConfirmationSheet(
             count = selectedIds.size,
             onDismiss = { showDeleteConfirmSheet = false },
             onConfirmDelete = {
@@ -494,180 +455,17 @@ fun AlarmsScreen(
 }
 
 @Composable
-private fun ExpandedAlarmsScreen(
-    alarms: List<Alarm>,
-    weekStart: WeekStart,
-    order: List<DayOfWeek>,
-    displayedAlarms: List<Alarm>,
-    exitingAlarmIds: Set<Long>,
-    selectedIds: Set<Long>,
-    inSelectionMode: Boolean,
-    visibleCardsCount: Int,
-    editingAlarm: Alarm?,
-    showNewAlarmPicker: Boolean,
-    onToggle: (Long) -> Unit,
-    onEdit: (Alarm) -> Unit,
-    onToggleSelect: (Long) -> Unit,
-    onStartSelection: (Long) -> Unit,
-    onAddAlarm: () -> Unit,
-    onSaveAlarm: (Alarm) -> Unit,
-    onDismissInline: () -> Unit,
-    cities: List<WorldCity>,
-    cityPickerContent: (@Composable () -> Unit)?,
-    showCityPicker: Boolean,
-    onShowLocalTime: () -> Unit,
-    selectedCityZoneId: String?,
-    onSelectCity: (WorldCity) -> Unit,
-    onAddCity: () -> Unit,
-    onDeleteAlarms: ((Set<Long>) -> Unit)?,
-    onSelectionCountChange: ((Int) -> Unit)?,
-    contentPadding: PaddingValues,
-    modifier: Modifier = Modifier,
-) {
-    val topPadding = contentPadding.calculateTopPadding() + 8.dp
-    val bottomPadding = contentPadding.calculateBottomPadding()
-
-    TwoPaneLayout(
-        leftPane = {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = topPadding, bottom = bottomPadding),
-            ) {
-                if (displayedAlarms.isEmpty()) {
-                    EmptyAlarmState(
-                        onAddAlarm = onAddAlarm,
-                        contentPadding = PaddingValues(0.dp),
-                    )
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 80.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        itemsIndexed(displayedAlarms, key = { _, alarm -> alarm.id }) { index, alarm ->
-                            val isCardVisible = alarm.id !in exitingAlarmIds && (index < visibleCardsCount)
-                            AnimatedVisibility(
-                                modifier = Modifier.animateItem(
-                                    placementSpec = spring(
-                                        stiffness = 380f,
-                                        dampingRatio = 0.68f,
-                                    ),
-                                ),
-                                visible = isCardVisible,
-                                enter = fadeIn(tween(180)) +
-                                    scaleIn(
-                                        initialScale = 0.86f,
-                                        animationSpec = spring(
-                                            dampingRatio = 0.62f,
-                                            stiffness = 400f,
-                                        ),
-                                    ),
-                                exit = fadeOut(tween(260)) +
-                                    scaleOut(
-                                        targetScale = 0.90f,
-                                        animationSpec = spring(dampingRatio = 0.78f, stiffness = 500f),
-                                    ),
-                            ) {
-                                AlarmTile(
-                                    alarm = alarm,
-                                    order = order,
-                                    selected = editingAlarm?.id == alarm.id || alarm.id in selectedIds,
-                                    inSelectionMode = inSelectionMode,
-                                    onToggle = { onToggle(alarm.id) },
-                                    onEdit = { onEdit(alarm) },
-                                    onToggleSelect = { onToggleSelect(alarm.id) },
-                                    onStartSelection = { onStartSelection(alarm.id) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        rightPane = {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = 4.dp, end = 16.dp, top = topPadding, bottom = bottomPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                AnimatedContent(
-                    modifier = Modifier.fillMaxSize(),
-                    targetState = if (showCityPicker) 2 else if (showNewAlarmPicker || editingAlarm != null) 1 else 0,
-                    transitionSpec = {
-                        if (targetState != 0) {
-                            (fadeIn(tween(220, easing = FastOutSlowInEasing)) +
-                                scaleIn(
-                                    initialScale = 0.94f,
-                                    animationSpec = spring(stiffness = 380f, dampingRatio = 0.82f),
-                                ) +
-                                slideInVertically(
-                                    animationSpec = spring(stiffness = 380f, dampingRatio = 0.82f),
-                                    initialOffsetY = { it / 16 },
-                                )) togetherWith (
-                                fadeOut(tween(180, easing = FastOutSlowInEasing)) +
-                                    scaleOut(targetScale = 0.97f, animationSpec = tween(180))
-                            )
-                        } else {
-                            (fadeIn(tween(220, delayMillis = if (initialState == 2) 180 else 0, easing = FastOutSlowInEasing)) +
-                                scaleIn(initialScale = 0.97f, animationSpec = spring(stiffness = 380f, dampingRatio = 0.82f))
-                            ) togetherWith (
-                                fadeOut(tween(180, easing = FastOutSlowInEasing)) +
-                                    scaleOut(targetScale = 0.94f, animationSpec = tween(180)) +
-                                    slideOutVertically(animationSpec = tween(180)) { it / 16 }
-                            )
-                        }
-                    },
-                    label = "rightPaneEditorTransition",
-                ) { pane ->
-                    if (pane == 2 && cityPickerContent != null) {
-                        cityPickerContent()
-                    } else if (pane == 1) {
-                        InlineAlarmEditorPanel(
-                            editingAlarm = if (showNewAlarmPicker) null else editingAlarm,
-                            weekStart = weekStart,
-                            order = order,
-                            onSave = onSaveAlarm,
-                            onCancel = onDismissInline,
-                            onDelete = { id ->
-                                onDeleteAlarms?.invoke(setOf(id))
-                                onDismissInline()
-                            },
-                        )
-                    } else {
-                        WorldClockPanel(
-                            cities = cities,
-                            selectedZoneId = selectedCityZoneId,
-                            onSelectCity = onSelectCity,
-                            onAddLocation = onAddCity,
-                            onShowLocalTime = onShowLocalTime,
-                        )
-                    }
-                }
-            }
-        },
-        leftWeight = 0.46f,
-        rightWeight = 0.54f,
-        paneSpacing = 20.dp,
-        contentPaddingDp = 16.dp,
-        modifier = modifier,
-    )
-}
-
-@Composable
-private fun InlineAlarmEditorPanel(
+internal fun InlineAlarmEditorPanel(
     editingAlarm: Alarm?,
     weekStart: WeekStart,
+    worldHourFormat: app.expressiveclock.data.HourFormat = app.expressiveclock.data.HourFormat.SYSTEM,
     order: List<DayOfWeek>,
     onSave: (Alarm) -> Unit,
     onCancel: () -> Unit,
     onDelete: (Long) -> Unit,
 ) {
     val context = LocalContext.current
-    val is24Hour = DateFormat.is24HourFormat(context)
+    val is24Hour = app.expressiveclock.ui.rememberSystem24HourFormat()
 
     val initialTime = editingAlarm?.time ?: LocalTime.of(8, 0)
     var hour by remember(editingAlarm?.id) { mutableIntStateOf(initialTime.hour) }
@@ -679,12 +477,10 @@ private fun InlineAlarmEditorPanel(
     var soundUri by remember(editingAlarm?.id) { mutableStateOf(editingAlarm?.soundUri) }
     var label by remember(editingAlarm?.id) { mutableStateOf(editingAlarm?.label ?: "") }
 
-    val soundLabel = remember(soundUri) {
-        when {
-            soundUri == null -> "Default"
-            soundUri == SILENT -> "Silent"
-            else -> runCatching { RingtoneManager.getRingtone(context, Uri.parse(soundUri))?.getTitle(context) }
-                .getOrNull() ?: "Default"
+    val systemSoundPicker = app.expressiveclock.ui.sheets.rememberAlarmSoundSelector(soundUri) { soundUri = it }
+    val soundLabel by androidx.compose.runtime.produceState(initialValue = "Default", key1 = soundUri, key2 = context) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            app.expressiveclock.ui.sheets.alarmSoundTitle(context, soundUri)
         }
     }
 
@@ -707,7 +503,7 @@ private fun InlineAlarmEditorPanel(
             is24Hour = is24Hour,
             pm = pm,
             editingHour = editingHour,
-            label = if (label.isBlank()) "Alarm" else label,
+            label = label,
             days = days,
             weekOrder = order,
             vibrate = vibrate,
@@ -722,7 +518,7 @@ private fun InlineAlarmEditorPanel(
                 days = if (day in days) days - day else days + day
             },
             onVibrateChange = { vibrate = it },
-            onSoundClick = { /* sound action */ },
+            onSoundClick = systemSoundPicker,
             onCancel = onCancel,
             onSave = {
                 val base = editingAlarm ?: Alarm(0L, LocalTime.of(hour, minute))
@@ -742,105 +538,6 @@ private fun InlineAlarmEditorPanel(
                 }
             },
         )
-    }
-}
-
-@Composable
-private fun DefaultRightPaneWorldClockPanel() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .glass(
-                shape = RoundedCornerShape(28.dp),
-                tint = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f),
-                borderAlpha = 0.82f,
-                shadowElevation = 14.dp,
-            )
-            .padding(20.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            WorldMapIllustration(
-                modifier = Modifier
-                    .fillMaxWidth(0.96f)
-                    .height(230.dp),
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.52f),
-            )
-            Spacer(Modifier.height(32.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.88f)
-                    .glass(
-                        shape = RoundedCornerShape(24.dp),
-                        tint = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f),
-                        borderAlpha = 0.82f,
-                        shadowElevation = 4.dp,
-                    )
-                    .padding(22.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(28.dp),
-                    )
-                    Spacer(Modifier.width(16.dp))
-                    Column {
-                        Text(
-                            "Newcastle",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            "Local time",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f),
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "06:50 AM",
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontFamily = ClockFace.family(opticalSize = 30f, width = ClockFace.NORMAL, weight = 700),
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            "Tue, 28 Jan",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WorldMapIllustration(
-    modifier: Modifier = Modifier,
-    tint: Color = MaterialTheme.colorScheme.primary,
-) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val dotRadius = 1.25f
-
-        WorldMapData.DOT_OFFSETS.forEach { offset ->
-            val cx = offset.x * w
-            val cy = offset.y * h
-            drawCircle(
-                color = tint,
-                radius = dotRadius,
-                center = Offset(cx, cy),
-            )
-        }
     }
 }
 
@@ -1156,6 +853,7 @@ private fun AlarmTile(
     selected: Boolean = false,
     inSelectionMode: Boolean = false,
     itemModifier: Modifier = Modifier,
+    maxTileWidth: Dp = Dp.Infinity,
     onToggle: () -> Unit,
     onEdit: () -> Unit,
     onToggleSelect: () -> Unit = {},
@@ -1173,7 +871,7 @@ private fun AlarmTile(
     val animatedContainer by animateColorAsState(
         targetValue = when {
             selected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = .92f)
-            armed -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = .62f)
+            armed -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = .62f)
             else -> MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = .88f)
         },
         animationSpec = tween(220),
@@ -1187,7 +885,7 @@ private fun AlarmTile(
     val animatedInk by animateColorAsState(
         targetValue = when {
             selected -> MaterialTheme.colorScheme.onPrimaryContainer
-            armed -> MaterialTheme.colorScheme.onTertiaryContainer
+            armed -> MaterialTheme.colorScheme.onPrimaryContainer
             else -> MaterialTheme.colorScheme.onSurfaceVariant
         },
         animationSpec = tween(220),
@@ -1211,16 +909,17 @@ private fun AlarmTile(
         cardScale.animateTo(1f, spring(dampingRatio = .82f, stiffness = 430f))
     }
 
-    val hour12 = (alarm.time.hour % 12).takeIf { it != 0 } ?: 12
-    val meridiem = if (alarm.time.hour < 12) "AM" else "PM"
+    val use24h = app.expressiveclock.ui.LocalAlarmCards24Hour.current
+    val hour12 = if (use24h) alarm.time.hour else (alarm.time.hour % 12).takeIf { it != 0 } ?: 12
+    val meridiem = if (use24h) "" else if (alarm.time.hour < 12) "AM" else "PM"
     val minutesText = "%02d".format(alarm.time.minute)
 
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    BoxWithConstraints(Modifier.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = maxTileWidth)) {
     val tileWidth = maxWidth
     val inset = CONTENT_INSET_DP.dp
     val fit = fittedTime(meridiem = meridiem, tileWidth = tileWidth, target = inset)
     val hourCap = fit.cap
-    val meridiemFit = rememberMeridiemFit(meridiem, minutesText, hourCap, ClockFace.WEIGHT_ON)
+    val meridiemFit = if (use24h) null else rememberMeridiemFit(meridiem, minutesText, hourCap, ClockFace.WEIGHT_ON)
     val timeToDays = hourCap * MERIDIEM_GAP_FRACTION - SWITCH_TOUCH_INSET_DP.dp - ALARM_DIGIT_BOTTOM_BLEED_DP.dp
     val tileHeight = inset * 2 + hourCap + timeToDays + SWITCH_ROW_VISIBLE_DP.dp
 
@@ -1315,6 +1014,7 @@ private fun AlarmTile(
                                 color = animatedInk,
                                 weight = animatedWeight,
                             )
+                            if (meridiemFit != null) {
                             Spacer(Modifier.height(hourCap * MERIDIEM_GAP_FRACTION))
                             CapText(
                                 text = meridiem,
@@ -1324,6 +1024,7 @@ private fun AlarmTile(
                                 tracking = ClockFace.CONDENSED_TRACKING,
                                 modifier = Modifier.offset(x = meridiemFit.offsetX),
                             )
+                            }
                         }
                     }
 
@@ -1332,7 +1033,7 @@ private fun AlarmTile(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        DayLetters(alarm, order, animatedInk)
+                        DayLetters(alarm, order, animatedInk, (tileWidth - inset * 2 - 60.dp).coerceIn(1.dp, DAY_BLOCK_DP.dp))
                         Switch(
                             checked = armed,
                             modifier = Modifier.graphicsLayer {
@@ -1370,6 +1071,7 @@ fun SelectionToolbar(
     selectedCount: Int,
     onClearSelection: () -> Unit,
     onDeleteClick: () -> Unit,
+    deleteDescription: String = "Delete selected alarms",
 ) {
     Row(
         modifier = Modifier
@@ -1399,7 +1101,7 @@ fun SelectionToolbar(
         IconButton(onClick = onDeleteClick) {
             Icon(
                 Icons.Outlined.Delete,
-                contentDescription = "Delete selected alarms",
+                contentDescription = deleteDescription,
                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }
@@ -1408,13 +1110,25 @@ fun SelectionToolbar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DeleteAlarmsConfirmationSheet(
+internal fun DeleteItemsConfirmationSheet(
     count: Int,
     onDismiss: () -> Unit,
     onConfirmDelete: () -> Unit,
+    itemName: String = "alarm",
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    var closing by remember { mutableStateOf(false) }
+    fun closeThen(action: () -> Unit) {
+        if (closing) return
+        closing = true
+        scope.launch {
+            try {
+                sheetState.hide()
+                if (!sheetState.isVisible) action()
+            } finally { closing = false }
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1447,7 +1161,7 @@ private fun DeleteAlarmsConfirmationSheet(
             Spacer(Modifier.height(16.dp))
 
             Text(
-                "Delete $count alarm${if (count > 1) "s" else ""}?",
+                "Delete $count $itemName${if (count > 1) "s" else ""}?",
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -1469,9 +1183,7 @@ private fun DeleteAlarmsConfirmationSheet(
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.error)
                     .elasticClickable {
-                        scope.launch { sheetState.hide() }.invokeOnCompletion {
-                            onConfirmDelete()
-                        }
+                        closeThen(onConfirmDelete)
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -1491,9 +1203,7 @@ private fun DeleteAlarmsConfirmationSheet(
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f))
                     .elasticClickable {
-                        scope.launch { sheetState.hide() }.invokeOnCompletion {
-                            onDismiss()
-                        }
+                        closeThen(onDismiss)
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -1639,11 +1349,11 @@ private fun AnimatedAlarmDigit(
  * letters: block width fixed, tracking down, glyphs wider.
  */
 @Composable
-private fun DayLetters(alarm: Alarm, order: List<DayOfWeek>, ink: Color) {
+private fun DayLetters(alarm: Alarm, order: List<DayOfWeek>, ink: Color, blockWidth: Dp = DAY_BLOCK_DP.dp) {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    val bold = ClockFace.capitals(DAY_CAP_DP.dp, ClockFace.CONDENSED, weight = DAY_WEIGHT_ON)
-    val light = ClockFace.capitals(DAY_CAP_DP.dp, ClockFace.CONDENSED, weight = DAY_WEIGHT_OFF)
+    val bold = ClockFace.capitals(if (blockWidth < 80.dp) 19.dp else DAY_CAP_DP.dp, ClockFace.CONDENSED, weight = DAY_WEIGHT_ON)
+    val light = ClockFace.capitals(if (blockWidth < 80.dp) 19.dp else DAY_CAP_DP.dp, ClockFace.CONDENSED, weight = DAY_WEIGHT_OFF)
 
     val text = remember(alarm.days, alarm.isOneShot, order, ink, bold, light) {
         buildAnnotatedString {
@@ -1667,10 +1377,10 @@ private fun DayLetters(alarm: Alarm, order: List<DayOfWeek>, ink: Color) {
         letterSpacing = with(density) { (DAY_TRACKING_DP.dp / bold.fontSize.toDp()).em },
     )
     val scaleX = with(density) {
-        DAY_BLOCK_DP.dp.toPx() / measurer.measure(text, style).size.width
+        blockWidth.toPx() / measurer.measure(text, style).size.width
     }
 
-    StretchedCaps(text = text, style = style, capHeight = DAY_CAP_DP.dp, scaleX = scaleX)
+    StretchedCaps(text = text, style = style, capHeight = if (blockWidth < 80.dp) 19.dp else DAY_CAP_DP.dp, scaleX = scaleX)
 }
 
 /** Weight is the state, the same way it is on the numerals above. Not a second colour ramp. */

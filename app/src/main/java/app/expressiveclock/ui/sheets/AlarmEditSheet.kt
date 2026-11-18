@@ -1,12 +1,5 @@
 package app.expressiveclock.ui.sheets
 
-import android.app.Activity
-import android.content.Intent
-import android.media.RingtoneManager
-import android.net.Uri
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -22,7 +15,6 @@ import app.expressiveclock.core.Alarm
 import app.expressiveclock.data.WeekStart
 import app.expressiveclock.data.order
 import kotlinx.coroutines.launch
-import java.time.DayOfWeek
 import java.time.LocalTime
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,7 +29,7 @@ fun AlarmEditSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val is24Hour = android.text.format.DateFormat.is24HourFormat(context)
+    val is24Hour = app.expressiveclock.ui.rememberSystem24HourFormat()
 
     var hour by rememberSaveable(initial.id) { mutableStateOf(initial.time.hour) }
     var minute by rememberSaveable(initial.id) { mutableStateOf(initial.time.minute) }
@@ -48,24 +40,11 @@ fun AlarmEditSheet(
     var vibrate by rememberSaveable(initial.id) { mutableStateOf(initial.vibrate) }
     var soundUri by rememberSaveable(initial.id) { mutableStateOf(initial.soundUri) }
 
-    val ringtonePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val picked: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
-            }
-            soundUri = picked?.toString() ?: SILENT
-        }
-    }
+    val openSoundSelector = rememberAlarmSoundSelector(soundUri) { soundUri = it }
 
-    val soundLabel = remember(soundUri) {
-        when {
-            soundUri == null -> "Default"
-            soundUri == SILENT -> "Silent"
-            else -> runCatching { RingtoneManager.getRingtone(context, Uri.parse(soundUri))?.getTitle(context) }
-                .getOrNull() ?: "Default"
+    val soundLabel by androidx.compose.runtime.produceState(initialValue = "Default", key1 = soundUri, key2 = context) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            app.expressiveclock.ui.sheets.alarmSoundTitle(context, soundUri)
         }
     }
 
@@ -73,9 +52,11 @@ fun AlarmEditSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = AlarmSheetShape,
+        dragHandle = { AlarmEditorDragHandle() },
         containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
     ) {
         AlarmPickerSheetContent(
+            modal = true,
             title = "Edit Alarm",
             hour = hour,
             minute = minute,
@@ -95,16 +76,7 @@ fun AlarmEditSheet(
             onLabelChange = { label = it },
             onToggleDay = { day -> days = if (day in days) days - day else days + day },
             onVibrateChange = { vibrate = it },
-            onSoundClick = {
-                ringtonePicker.launch(
-                    Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Alarm sound")
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
-                        .putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, soundUri?.takeIf { it != SILENT }?.let(Uri::parse))
-                )
-            },
+            onSoundClick = openSoundSelector,
             onCancel = {
                 scope.launch {
                     sheetState.hide()

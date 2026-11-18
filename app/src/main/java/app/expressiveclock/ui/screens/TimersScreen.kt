@@ -1,5 +1,6 @@
 package app.expressiveclock.ui.screens
 
+import app.expressiveclock.ui.responsive.persistentScrollEdges
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterExitState
@@ -33,6 +34,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -95,12 +97,16 @@ import androidx.compose.ui.util.lerp
 import app.expressiveclock.core.ClockTimer
 import app.expressiveclock.core.TimerState
 import app.expressiveclock.data.DEFAULT_TIMER_PRESETS
+import app.expressiveclock.ui.timerReadoutGeometry
+import app.expressiveclock.ui.featheredVerticalViewport
 import app.expressiveclock.data.formatPresetLabel
 import app.expressiveclock.ui.glass
 import app.expressiveclock.ui.elasticClickable
 import app.expressiveclock.ui.luminousElasticClickable
 import app.expressiveclock.ui.responsive.LocalAppWindowSizeInfo
 import app.expressiveclock.ui.responsive.TwoPaneLayout
+import app.expressiveclock.ui.responsive.ScrollPane
+import androidx.compose.ui.text.rememberTextMeasurer
 import app.expressiveclock.ui.theme.ClockFace
 import app.expressiveclock.ui.theme.Numerals
 import kotlinx.coroutines.delay
@@ -119,6 +125,7 @@ fun TimersScreen(
     onBackspace: () -> Unit,
     onResetDraft: () -> Unit,
     onPreset: (Int) -> Unit,
+    onEditPreset: (Int, Int) -> Unit,
     onStart: () -> Unit,
     onPauseResume: () -> Unit,
     onAddTen: () -> Unit,
@@ -131,6 +138,7 @@ fun TimersScreen(
     val isFinished = timer?.state == TimerState.FINISHED || (timer?.state == TimerState.RUNNING && remaining.isZero)
     val running = timer?.state == TimerState.RUNNING && !isFinished
     val windowSizeInfo = LocalAppWindowSizeInfo.current
+    val bodyScroll = rememberScrollState()
 
     if (windowSizeInfo.isExpanded) {
         Box(
@@ -188,6 +196,7 @@ fun TimersScreen(
                         onBackspace = onBackspace,
                         onResetDraft = onResetDraft,
                         onPreset = onPreset,
+                        onEditPreset = onEditPreset,
                         onStart = onStart,
                     )
                 }
@@ -199,10 +208,8 @@ fun TimersScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(
-                Modifier.fillMaxWidth().weight(1f).then(
-                    if (windowSizeInfo.isHeightCompact) Modifier.verticalScroll(rememberScrollState())
-                    else Modifier,
-                ),
+                Modifier.fillMaxWidth().weight(1f)
+                    .persistentScrollEdges(bodyScroll),
                 contentAlignment = Alignment.TopCenter,
             ) {
                 AnimatedContent(
@@ -247,11 +254,14 @@ fun TimersScreen(
                             onBackspace = onBackspace,
                             onResetDraft = onResetDraft,
                             onPreset = onPreset,
+                            onEditPreset = onEditPreset,
                         )
                     }
                 }
             }
 
+            Spacer(Modifier.height(if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1f ||
+                androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 360) 16.dp else 0.dp))
             TimerControls(
                 hasTimer = active,
                 running = running,
@@ -272,32 +282,6 @@ private fun formatTimer(duration: Duration): String {
 }
 
 private enum class TimerRollDirection { UP, DOWN }
-
-private fun Modifier.featheredVerticalViewport(
-    active: Boolean,
-    fadeHeightFraction: Float = 0.18f,
-): Modifier = if (!active) this else this
-    .graphicsLayer {
-        compositingStrategy = CompositingStrategy.Offscreen
-    }
-    .drawWithContent {
-        drawContent()
-        val fadePx = size.height * fadeHeightFraction
-        val topFadeFraction = (fadePx / size.height).coerceIn(0f, 0.45f)
-        val bottomFadeFraction = 1f - topFadeFraction
-
-        val maskBrush = Brush.verticalGradient(
-            0.0f to Color.Transparent,
-            topFadeFraction to Color.Black,
-            bottomFadeFraction to Color.Black,
-            1.0f to Color.Transparent,
-        )
-
-        drawRect(
-            brush = maskBrush,
-            blendMode = BlendMode.DstIn,
-        )
-    }
 
 @Composable
 private fun UpwardSetupDigitCell(
@@ -442,21 +426,11 @@ private fun TickerTimerReadout(
         contentAlignment = Alignment.Center,
     ) {
         if (autoSize) {
-            val availableWidth = maxWidth
-            val numDigits = text.count { it != ':' }
-            val numColons = text.count { it == ':' }
-            val numGaps = (text.length - 1).coerceAtLeast(0)
-
-            val digitWeight = 1.0f
-            val colonWeight = 0.28f
-            val spacingWeight = 0.08f
-            val totalUnits = (numDigits * digitWeight) + (numColons * colonWeight) + (numGaps * spacingWeight)
-
-            val unit = if (totalUnits > 0f) availableWidth / totalUnits else availableWidth
-            val computedDigitWidth = unit * digitWeight
-            val computedColonWidth = unit * colonWeight
-            val computedSpacing = unit * spacingWeight
-            val computedCapHeight = (computedDigitWidth.value * 1.32f).dp
+            val geometry = timerReadoutGeometry(maxWidth, text)
+            val computedDigitWidth = geometry.digitWidth
+            val computedColonWidth = geometry.colonWidth
+            val computedSpacing = geometry.spacing
+            val computedCapHeight = geometry.capHeight
 
             Row(
                 modifier = Modifier
@@ -505,13 +479,13 @@ private fun TickerTimerReadout(
             Row(
                 modifier = Modifier
                     .graphicsLayer {
-                        val effective = fitScale * scale
+                        val effective = scale
                         scaleX = effective
                         scaleY = effective
                     }
                     .clearAndSetSemantics { contentDescription = text },
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(spacing),
+                horizontalArrangement = Arrangement.spacedBy(spacing * fitScale),
             ) {
                 text.forEachIndexed { index, char ->
                     val staggerIndex = if (rollDirection == TimerRollDirection.UP) index else (text.length - 1 - index).coerceAtLeast(0)
@@ -520,8 +494,8 @@ private fun TickerTimerReadout(
                     if (rollDirection == TimerRollDirection.UP) {
                         UpwardSetupDigitCell(
                             char = char,
-                            width = if (char == ':') colonWidth else digitWidth,
-                            capHeight = capHeight,
+                            width = (if (char == ':') colonWidth else digitWidth) * fitScale,
+                            capHeight = capHeight * fitScale,
                             color = color,
                             numeralWidth = numeralWidth,
                             staggerDelayMs = staggerDelayMs,
@@ -529,8 +503,8 @@ private fun TickerTimerReadout(
                     } else {
                         TickerCell(
                             char = char,
-                            width = if (char == ':') colonWidth else digitWidth,
-                            capHeight = capHeight,
+                            width = (if (char == ':') colonWidth else digitWidth) * fitScale,
+                            capHeight = capHeight * fitScale,
                             key = index,
                             color = color,
                             numeralWidth = numeralWidth,
@@ -667,6 +641,7 @@ private fun ExpandedSetTimerBody(
     onBackspace: () -> Unit,
     onResetDraft: () -> Unit,
     onPreset: (Int) -> Unit,
+    onEditPreset: (Int, Int) -> Unit,
     onStart: () -> Unit,
 ) {
     var isLongPressReset by remember { mutableStateOf(false) }
@@ -679,13 +654,7 @@ private fun ExpandedSetTimerBody(
 
     TwoPaneLayout(
         leftPane = {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 8.dp, horizontal = 8.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+            ScrollPane(Modifier.padding(vertical = 8.dp, horizontal = 8.dp)) {
                 Keypad(
                     onDigit = { char ->
                         isLongPressReset = false
@@ -703,6 +672,7 @@ private fun ExpandedSetTimerBody(
                 Spacer(Modifier.height(14.dp))
                 Presets(
                     presets = presets,
+                    onEditPreset = onEditPreset,
                     onPreset = { seconds ->
                         isLongPressReset = false
                         onPreset(seconds)
@@ -711,13 +681,7 @@ private fun ExpandedSetTimerBody(
             }
         },
         rightPane = {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 12.dp, horizontal = 16.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+            ScrollPane(Modifier.padding(vertical = 12.dp, horizontal = 16.dp)) {
                 TickerTimerReadout(
                     text = formatTimer(draft),
                     autoSize = true,
@@ -768,11 +732,12 @@ private fun ExpandedRunningTimerBody(
 
     TwoPaneLayout(
         leftPane = {
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
-                val circleSize = 420.dp
+                val circleSize = minOf(420.dp, maxWidth, maxHeight)
+                val readoutFit = minOf(1f, (circleSize.value - 32f).coerceAtLeast(1f) / 282f)
                 val surface = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = .96f)
                 Box(
                     modifier = Modifier
@@ -788,14 +753,14 @@ private fun ExpandedRunningTimerBody(
                         running = running || isFinished,
                     )
 
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(Modifier.padding(horizontal = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         TickerTimerReadout(
                             text = formatTimer(remaining),
-                            capHeight = 44.dp,
+                            capHeight = 44.dp * readoutFit,
                             scale = 0.98f,
                             spacing = 0.5.dp,
-                            digitWidth = 42.dp,
-                            colonWidth = 12.dp,
+                            digitWidth = 42.dp * readoutFit,
+                            colonWidth = 12.dp * readoutFit,
                             rollDirection = TimerRollDirection.DOWN,
                             enableStagger = true,
                         )
@@ -815,13 +780,7 @@ private fun ExpandedRunningTimerBody(
             }
         },
         rightPane = {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 12.dp, horizontal = 24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+            ScrollPane(Modifier.padding(vertical = 12.dp, horizontal = 24.dp)) {
                 if (isFinished) {
                     Box(
                         modifier = Modifier
@@ -914,6 +873,7 @@ private fun SetTimerBody(
     onBackspace: () -> Unit,
     onResetDraft: () -> Unit,
     onPreset: (Int) -> Unit,
+    onEditPreset: (Int, Int) -> Unit,
 ) {
     var isLongPressReset by remember { mutableStateOf(false) }
 
@@ -953,6 +913,7 @@ private fun SetTimerBody(
         Spacer(Modifier.height(18.dp))
         Presets(
             presets = presets,
+            onEditPreset = onEditPreset,
             onPreset = { seconds ->
                 isLongPressReset = false
                 onPreset(seconds)
@@ -965,7 +926,18 @@ private fun SetTimerBody(
 private fun Presets(
     presets: List<Int>,
     onPreset: (Int) -> Unit,
+    onEditPreset: (Int, Int) -> Unit,
 ) {
+    var editingIndex by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Int?>(null) }
+    editingIndex?.let { index ->
+        presets.getOrNull(index)?.let { seconds ->
+            SinglePresetEditDialog(
+                title = "Preset ${index + 1}", initialSeconds = seconds,
+                onDismiss = { editingIndex = null },
+                onConfirm = { updated -> onEditPreset(index, updated); editingIndex = null },
+            )
+        }
+    }
     Column(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -977,16 +949,27 @@ private fun Presets(
             modifier = Modifier.padding(horizontal = 4.dp),
         )
 
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            presets.forEach { seconds ->
-                Box(Modifier.weight(1f)) {
-                    PresetButton(
-                        seconds = seconds,
-                        onClick = { onPreset(seconds) },
-                    )
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val density = LocalDensity.current
+            val measurer = rememberTextMeasurer()
+            val style = MaterialTheme.typography.labelLargeEmphasized
+            val required = with(density) { (presets.maxOfOrNull {
+                measurer.measure(formatPresetLabel(it), style).size.width
+            } ?: 0).toDp() } + 24.dp
+            val maxColumns = ((maxWidth + 6.dp) / (required + 6.dp)).toInt().coerceIn(1, presets.size.coerceAtLeast(1))
+            val rows = (presets.size + maxColumns - 1) / maxColumns
+            val columns = if (rows == 0) 1 else (presets.size + rows - 1) / rows
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                presets.chunked(columns).forEachIndexed { rowIndex, row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        row.forEachIndexed { columnIndex, seconds ->
+                            val index = rowIndex * columns + columnIndex
+                            Box(Modifier.weight(1f)) {
+                                PresetButton(seconds, onClick = { onPreset(seconds) },
+                                    onLongClick = { editingIndex = index })
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -994,13 +977,13 @@ private fun Presets(
 }
 
 @Composable
-private fun PresetButton(seconds: Int, onClick: () -> Unit) {
+private fun PresetButton(seconds: Int, onClick: () -> Unit, onLongClick: () -> Unit) {
     val presetShape = RoundedCornerShape(27.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(54.dp)
-            .luminousElasticClickable(shape = presetShape, onClick = onClick)
+            .luminousElasticClickable(shape = presetShape, onClick = onClick, onLongClick = onLongClick)
             .clip(presetShape)
             .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = .92f))
             .border(1.25.dp, MaterialTheme.colorScheme.primary.copy(alpha = .28f), presetShape),
@@ -1116,7 +1099,7 @@ private fun RunningTimerBody(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         androidx.compose.foundation.layout.BoxWithConstraints {
-            val circleSize = minOf(maxWidth + 24.dp, size)
+            val circleSize = minOf(maxWidth, size)
             Box(
                 modifier = Modifier
                     .size(circleSize)
@@ -1127,7 +1110,7 @@ private fun RunningTimerBody(
             ) {
                 ExpressiveTimerRing(progress = progress, color = primary, running = timer.state == TimerState.RUNNING || isFinished)
 
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.padding(horizontal = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     TickerTimerReadout(
                         text = formatTimer(remaining),
                         capHeight = 49.dp,

@@ -23,6 +23,9 @@ import kotlinx.coroutines.launch
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        // Preferences are credential-protected. Do not crash during locked boot;
+        // BOOT_COMPLETED reschedules once the user unlocks that storage.
+        if (context.getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == false) return
         val app = context.applicationContext
         val pending = goAsync()
         CoroutineScope(Dispatchers.Default).launch {

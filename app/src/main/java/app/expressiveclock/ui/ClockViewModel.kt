@@ -21,6 +21,7 @@ import app.expressiveclock.core.Lap
 import app.expressiveclock.core.Stopwatch
 import app.expressiveclock.core.TimerState
 import app.expressiveclock.core.WorldCity
+import app.expressiveclock.core.preservingDismissal
 import app.expressiveclock.data.ClockSettings
 import app.expressiveclock.data.ClockStore
 import kotlinx.coroutines.delay
@@ -142,39 +143,37 @@ class ClockViewModel(app: Application) : AndroidViewModel(app) {
     /* ── Alarms ─────────────────────────────────────────────────────────────────────────────── */
 
     fun toggleAlarm(id: Long) = viewModelScope.launch {
-        val next = store.alarmsNow().map {
-            if (it.id == id) it.copy(enabled = !it.enabled, snoozedUntilMillis = null) else it
-        }
-        store.putAlarms(next)
+        val next = store.updateAlarms { list -> list.map {
+            if (it.id == id) it.copy(enabled = !it.enabled, snoozedUntilMillis = null, skippedOccurrenceMillis = null, skippedOccurrenceDate = null) else it
+        } }
         next.firstOrNull { it.id == id }?.let { a ->
             if (a.enabled) AlarmScheduler.schedule(ctx, a) else AlarmScheduler.cancel(ctx, id)
         }
     }
 
     /** Insert or replace. A null [Alarm.id] of 0 means "new", which is what the sheet sends. */
-    fun saveAlarm(draft: Alarm) = viewModelScope.launch {
+    fun saveAlarm(draft: Alarm, onSaved: (Alarm) -> Unit = {}) = viewModelScope.launch {
         val id = if (draft.id == 0L) store.nextId() else draft.id
-        val alarm = draft.copy(id = id, snoozedUntilMillis = null)
-        val current = store.alarmsNow()
-        val next = if (current.any { it.id == id }) {
-            current.map { if (it.id == id) alarm else it }
-        } else {
-            current + alarm
+        var alarm = draft.copy(id = id)
+        store.updateAlarms { current ->
+            alarm = draft.copy(id = id).preservingDismissal(current.firstOrNull { it.id == id })
+            (if (current.any { it.id == id }) current.map { if (it.id == id) alarm else it }
+            else current + alarm).sortedWith(compareBy({ it.time.hour }, { it.time.minute }))
         }
-        store.putAlarms(next.sortedWith(compareBy({ it.time.hour }, { it.time.minute })))
         AlarmScheduler.schedule(ctx, alarm)
+        onSaved(alarm)
     }
 
     fun deleteAlarm(id: Long) = viewModelScope.launch {
         // The UI owns the short exit animation now, so the persisted alarm can be removed
         // immediately. AlarmsScreen retains the card visually until its exit completes.
         AlarmScheduler.cancel(ctx, id)
-        store.putAlarms(store.alarmsNow().filterNot { it.id == id })
+        store.updateAlarms { list -> list.filterNot { it.id == id } }
     }
 
     fun deleteAlarms(ids: Set<Long>) = viewModelScope.launch {
         ids.forEach { id -> AlarmScheduler.cancel(ctx, id) }
-        store.putAlarms(store.alarmsNow().filterNot { it.id in ids })
+        store.updateAlarms { list -> list.filterNot { it.id in ids } }
     }
 
     /* ── World clock ────────────────────────────────────────────────────────────────────────── */
@@ -185,20 +184,23 @@ class ClockViewModel(app: Application) : AndroidViewModel(app) {
     fun finishCityEntrance() { newlyAddedCity = null }
 
     fun addCity(city: WorldCity) = viewModelScope.launch {
-        val current = store.cities.first()
-        if (current.none { it.zone == city.zone }) {
-            newlyAddedCity = city.zone.id
-            try {
-                store.putCities(current + city)
-            } catch (error: Exception) {
-                newlyAddedCity = null
-                throw error
+        try {
+            store.updateCities { current ->
+                if (current.none { it.zone == city.zone }) {
+                    newlyAddedCity = city.zone.id
+                    current + city
+                } else current
             }
+        } catch (error: Exception) {
+            newlyAddedCity = null
+            throw error
         }
     }
 
-    fun removeCity(zone: ZoneId) = viewModelScope.launch {
-        store.putCities(store.cities.first().filterNot { it.zone == zone })
+    fun removeCity(zone: ZoneId) = removeCities(setOf(zone))
+
+    fun removeCities(zones: Set<ZoneId>) = viewModelScope.launch {
+        store.updateCities { current -> current.filterNot { it.zone in zones } }
     }
 
     /* ── Timer ──────────────────────────────────────────────────────────────────────────────── */
