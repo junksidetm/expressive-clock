@@ -1,0 +1,1 @@
+New World Clock with illuminated city cards, mechanical clocks and smoother scrolling. More reliable alarm audio, custom sounds and upcoming-alarm dismissal. Live home-screen widget improvements. Refined Alarm Sound library, quick preset editing by long press, and better layouts for foldables and enlarged displays. Improved dark-mode status icons and navigation animations.
