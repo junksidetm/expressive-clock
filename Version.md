@@ -122,3 +122,11 @@
   - `app/src/main/java/app/expressiveclock/ui/sheets/AlarmEditSheet.kt`: Wired `specificDate` state handling and saving.
   - `app/src/main/java/app/expressiveclock/ui/screens/AlarmsScreen.kt`: Added `NextAlarmCountdownCard` as a persistent header item spanning the alarm grid with battery-efficient `rememberMinuteTicker()` and added `SpecificDateBadge` to alarm tiles.
   - `app/src/test/java/app/expressiveclock/alarm/UpcomingAlarmTest.kt`: Added 4 unit test cases verifying future date scheduling, past date rejection, skip handling, and label generation.
+
+
+### Entry 009: Upstream Pull Request #13 Submission & Remote Verification
+- **Timestamp:** 2026-11-19 11:26:00 +05:30
+- **Author:** Elite Android Engineer & Antigravity Assistant
+- **Status:** Complete (100%)
+- **Target:** Submitted official upstream [Pull Request #13](https://github.com/samuelbeckman/expressive-clock/pull/13) to `samuelbeckman/expressive-clock:main` containing the complete implementation for Specific Calendar Date Alarms and Permanent Countdown Indicator. Remote GitHub Actions debug APK build verified with 100% success ([Run 44468247472](https://github.com/junksidetm/expressive-clock/actions/runs/44468247472)).
+- **PR URL:** https://github.com/samuelbeckman/expressive-clock/pull/13
